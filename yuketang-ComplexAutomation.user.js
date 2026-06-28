@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
-// @namespace    https://github.com/Si/yuketang-ComplexAutomation
-// @version      4.1.0
-// @description  雨课堂复杂自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
-// @author       Si
+// @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
+// @version      1.4.0
+// @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
+// @author       nagelanping
 // @license      GPL-3.0-only
 // @match        *://*.yuketang.cn/*
 // @match        *://*.gdufemooc.cn/*
@@ -21,7 +21,7 @@
 // ==/UserScript==
 
 // SPDX-License-Identifier: GPL-3.0-only
-// Copyright (C) 2026 Si and contributors
+// Copyright (C) 2026 nagelanping and contributors
 
 (() => {
   'use strict';
