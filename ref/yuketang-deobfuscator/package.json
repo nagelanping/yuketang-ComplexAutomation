@@ -1,0 +1,28 @@
+{
+  "name": "yuketang-deobfuscator",
+  "version": "1.0.0",
+  "description": "雨课堂字体混淆反混淆用户脚本 — 基于字形哈希匹配实时还原原始文字",
+  "main": "yuketang-deobfuscator.user.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "用户脚本",
+    "油猴",
+    "脚本猫",
+    "反混淆",
+    "字体",
+    "雨课堂",
+    "字形哈希",
+    "opentype"
+  ],
+  "author": "novob",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "fontkit": "^2.0.4",
+    "opentype.js": "^2.0.0",
+    "puppeteer": "^25.1.0"
+  }
+}

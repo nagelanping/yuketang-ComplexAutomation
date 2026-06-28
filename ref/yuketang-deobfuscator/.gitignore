@@ -1,0 +1,8 @@
+node_modules/
+fonts/
+glyph-hash-map.json
+gen-hash-map.js
+build-script.js
+decrypt.html
+package-lock.json
+debug/
