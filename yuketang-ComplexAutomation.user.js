@@ -2212,7 +2212,7 @@
           panel.log('未提取到有效选项，请人工检查', 'warning');
           return;
         }
-        panel.log(`AI 建议选：${parsed.answers.join(', ')}`);
+        panel.log(`AI 建议选：${parsed.answers.join(', ')}`, 'warning');
         for (const idx of targetIndices) {
           if (!options[idx]) continue;
           const clickable = options[idx].querySelector('label.el-radio') ||
