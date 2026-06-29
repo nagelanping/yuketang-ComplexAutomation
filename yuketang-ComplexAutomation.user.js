@@ -1201,6 +1201,12 @@
         && rect.width > 0
         && rect.height > 0;
     },
+    isDisabledElement(element) {
+      if (!element || element.nodeType !== 1) return false;
+      return Boolean(element.disabled)
+        || element.getAttribute('aria-disabled') === 'true'
+        || /\b(is-disabled|disabled)\b/i.test(String(element.className || ''));
+    },
     getRoute() {
       // ai-workspace / lms-graph 路由
       const match = location.pathname.match(/^\/ai-workspace\/lms-graph\/([^/]+)\/([^/]+)\/([^/?#]+)/);
@@ -1387,10 +1393,14 @@
         '[class*="problem-index"]',
         '[class*="question-index"]'
       ].join(',');
-      const all = [...root.querySelectorAll(selectors)];
-      return all.filter((el, index, arr) => {
+      const visible = [...root.querySelectorAll(selectors)].filter((el, index, arr) => {
         if (!this.isVisibleElement(el)) return false;
         if (arr.indexOf(el) !== index) return false;
+        return true;
+      });
+      return visible.filter(el => {
+        // 宽泛 class* selector 可能同时命中题号列表容器和题号项；只保留叶子题号，避免末题被重复遍历。
+        if (visible.some(other => other !== el && el.contains(other))) return false;
         const text = this.normalizeText(el.innerText);
         return text && text.length <= 20;
       });
@@ -1461,9 +1471,6 @@
     },
     isExerciseAnswered(root = this.getExerciseContainer()) {
       if (!root) return false;
-      const disabled = root.querySelector('.el-button.el-button--info.is-disabled.is-plain')
-        || root.querySelector('button[disabled]');
-      if (disabled) return true;
       const statusSelectors = [
         '.result',
         '.status',
@@ -1476,6 +1483,11 @@
           .find(el => this.isVisibleElement(el) && /已完成|已作答|已提交|回答正确|回答错误/.test(this.normalizeText(el.innerText)));
         if (statusNode) return true;
       }
+      const disabledDoneButton = [...root.querySelectorAll('button, .el-button, [role="button"]')]
+        .find(el => this.isVisibleElement(el)
+          && this.isDisabledElement(el)
+          && /已完成|已作答|已提交|回答正确|回答错误|完成本题/.test(this.normalizeText(el.innerText)));
+      if (disabledDoneButton) return true;
       return false;
     },
     getExerciseActionButton(root = this.getExerciseContainer(), pattern = /提交|保存|确认|确定|下一题|下一道|下一步|完成本题/) {
@@ -1486,7 +1498,9 @@
         ...root.querySelectorAll(selectors),
         ...ownerDocument.querySelectorAll(selectors)
       ];
-      return nodes.find(el => this.isVisibleElement(el) && pattern.test(this.normalizeText(el.innerText)));
+      return nodes.find(el => this.isVisibleElement(el)
+        && !this.isDisabledElement(el)
+        && pattern.test(this.normalizeText(el.innerText)));
     }
   };
 
@@ -2221,12 +2235,16 @@
         for (const root of roots) {
           const local = root.querySelectorAll('button, .el-button, [role="button"]');
           for (const btn of local) {
-            if (btn.offsetParent !== null && matchText(btn.innerText || '')) return btn;
+            if (btn.offsetParent !== null
+              && !AiWorkspace.isDisabledElement(btn)
+              && matchText(btn.innerText || '')) return btn;
           }
         }
         const global = ownerDocument.querySelectorAll('.el-button.el-button--primary.el-button--medium');
         for (const btn of global) {
-          if (matchText(btn.innerText || '') && btn.offsetParent !== null) return btn;
+          if (matchText(btn.innerText || '')
+            && btn.offsetParent !== null
+            && !AiWorkspace.isDisabledElement(btn)) return btn;
         }
         return null;
       })();
@@ -2615,12 +2633,65 @@
       }
       this.panel.log('进入作业，启动截图 + 多模态 AI');
       item.click();
-      await Utils.sleep(1500);
+      await Utils.poll(() => {
+        const exerciseDoc = AiWorkspace.getExerciseDocument() || document;
+        return Boolean(AiWorkspace.getExerciseContainer())
+          || AiWorkspace.getExerciseQuestionTabs(exerciseDoc).length > 0
+          || exerciseDoc.querySelector('.item-type, .item-body, .container-problem');
+      }, { interval: 500, timeout: 12000 });
       let i = 0;
       const maxRetry = Config.aiMaxRetry; // 最大重试次数
       while (true) {
-        const items = document.querySelectorAll('.subject-item.J_order, .subject-item, [class*="question-index"], [class*="problem-index"]');
-        const problems = AiWorkspace.getExerciseProblems(document.querySelector('.container-problem'));
+        const exerciseDoc = AiWorkspace.getExerciseDocument() || document;
+        const container = AiWorkspace.getExerciseContainer() || exerciseDoc.querySelector('.container-problem') || exerciseDoc;
+        const items = AiWorkspace.getExerciseQuestionTabs(exerciseDoc);
+        const problems = AiWorkspace.getExerciseProblems(container);
+        if (!items.length) {
+          this.panel.log('未找到题号列表，尝试按当前题和下一题按钮推进', 'warning');
+          let touchedQuestion = false;
+          let previousFingerprint = '';
+          for (let fallbackIndex = 0; fallbackIndex < 50; fallbackIndex++) {
+            const latestDoc = AiWorkspace.getExerciseDocument() || document;
+            const latestContainer = AiWorkspace.getExerciseContainer() || latestDoc.querySelector('.container-problem') || latestDoc;
+            const currentQuestion = AiWorkspace.getExerciseQuestionBody(latestContainer);
+            const fingerprint = AiWorkspace.normalizeText(currentQuestion?.innerText || '').slice(0, 120);
+            if (!currentQuestion || !fingerprint || (fallbackIndex > 0 && fingerprint === previousFingerprint)) break;
+            touchedQuestion = true;
+            if (!AiWorkspace.isExerciseAnswered(currentQuestion)) {
+              const questionType = Solver.detectQuestionType(currentQuestion);
+              let optionCount = 0;
+              if (questionType !== 'fillblank') {
+                optionCount = Solver.getVisibleOptionCount(currentQuestion);
+                if (!optionCount) {
+                  this.panel.log(`当前题未找到选项，停止无题号 fallback`, 'warning');
+                  break;
+                }
+              }
+              const imageDataUrl = await Solver.captureQuestionImage(currentQuestion);
+              panel.log('请求多模态 AI 获取答案...');
+              const aiText = await Solver.askAI(imageDataUrl, optionCount, questionType);
+              await Solver.autoSelectAndSubmit(aiText, currentQuestion);
+              await Utils.sleep(1500);
+            }
+            previousFingerprint = fingerprint;
+            const nextBtn = AiWorkspace.getExerciseActionButton(latestDoc, /下一题|下一道|下一步/);
+            if (!nextBtn) break;
+            nextBtn.click();
+            const moved = await Utils.poll(() => {
+              const movedDoc = AiWorkspace.getExerciseDocument() || document;
+              const movedContainer = AiWorkspace.getExerciseContainer() || movedDoc.querySelector('.container-problem') || movedDoc;
+              const nextQuestion = AiWorkspace.getExerciseQuestionBody(movedContainer);
+              const nextFingerprint = AiWorkspace.normalizeText(nextQuestion?.innerText || '').slice(0, 120);
+              return nextFingerprint && nextFingerprint !== fingerprint;
+            }, { interval: 500, timeout: 5000 });
+            if (!moved) break;
+          }
+          if (!touchedQuestion) {
+            this.panel.log('未找到题号列表或题目内容，跳过该作业以避免重载循环', 'warning');
+            if (failKey) FailGate.skip(failKey);
+          }
+          break;
+        }
         if (i >= items.length) {
           this.panel.log(`所有题目处理完毕，共 ${items.length} 题，准备交卷`);
           break;
@@ -2673,6 +2744,16 @@
             panel.log('请求多模态 AI 获取答案...');
             const aiText = await Solver.askAI(imageDataUrl, optionCount, questionType);
             await Solver.autoSelectAndSubmit(aiText, targetEl);
+            const saved = await Utils.poll(() => {
+              const freshDoc = AiWorkspace.getExerciseDocument() || document;
+              const freshContainer = AiWorkspace.getExerciseContainer() || freshDoc.querySelector('.container-problem') || freshDoc;
+              const freshTabs = AiWorkspace.getExerciseQuestionTabs(freshDoc);
+              const freshProblems = AiWorkspace.getExerciseProblems(freshContainer);
+              return AiWorkspace.isProblemSubmitted(freshProblems[i])
+                || AiWorkspace.isExerciseTabAnswered(freshTabs[i] || listItem)
+                || AiWorkspace.isExerciseAnswered(targetEl);
+            }, { interval: 500, timeout: 5000 });
+            if (!saved) this.panel.log(`第 ${i + 1} 题提交状态未及时回写，继续处理后续题目`, 'warning');
             success = true;
           } catch (err) {
             retryCount++;
@@ -2690,7 +2771,7 @@
       }
 
       // 尝试点击整体交卷/提交按钮
-      const submitAllBtn = AiWorkspace.getExerciseActionButton(document, /交卷|提交作业|提交答案|确认提交/);
+      const submitAllBtn = AiWorkspace.getExerciseActionButton(document, /交卷|提交作业|提交试卷|完成作业|确认提交/);
       if (submitAllBtn) {
         this.panel.log('已找到交卷按钮，正在提交...');
         submitAllBtn.click();
