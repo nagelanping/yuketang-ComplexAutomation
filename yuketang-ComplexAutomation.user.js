@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.2
+// @version      0.9.4
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -135,6 +135,10 @@
       return path.includes('/ai-workspace/lms-graph/')
         || path.includes('/v2/web/')
         || path.includes('/pro/lms/');
+    },
+    isV2ContentPage() {
+      return location.pathname.includes('/v2/web/')
+        && !location.pathname.includes('/v2/web/studentLog/');
     },
     waitForMountTarget(timeout = 15000) {
       const getTarget = () => document.body || document.documentElement;
@@ -466,6 +470,24 @@
               .info li .tag {
                 color: var(--accent);
                 font-weight: 500;
+              }
+              .info li.log-entry {
+                display: flex;
+                align-items: flex-start;
+                gap: 7px;
+                font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+                line-height: 1.45;
+              }
+              .info .log-tag {
+                flex: 0 0 auto;
+                font-weight: 700;
+              }
+              .info .log-tag.info { color: #248a3d; }
+              .info .log-tag.warning { color: #b26a00; }
+              .info .log-tag.error { color: #d70015; }
+              .info .log-message {
+                min-width: 0;
+                overflow-wrap: anywhere;
               }
               .info hr {
                 border: none;
@@ -802,9 +824,21 @@
     ui.minimality.addEventListener('click', enterMini);
     ui.miniBasic.addEventListener('click', exitMini);
 
-    const log = message => {
+    const log = (message, level = '') => {
+      const normalizedLevel = ['info', 'warning', 'error'].includes(String(level).toLowerCase())
+        ? String(level).toLowerCase()
+        : 'info';
+      const label = { info: 'Info', warning: 'Warning', error: 'Error' }[normalizedLevel] || 'Info';
       const li = doc.createElement('li');
-      li.innerText = message;
+      const tag = doc.createElement('span');
+      const text = doc.createElement('span');
+      li.className = 'log-entry';
+      tag.className = `log-tag ${normalizedLevel}`;
+      text.className = 'log-message';
+      tag.innerText = `[${label}]`;
+      text.innerText = String(message ?? '').trim();
+      li.appendChild(tag);
+      li.appendChild(text);
       ui.info.appendChild(li);
       if (ui.info.lastElementChild) ui.info.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'end', inline: 'nearest' });
     };
@@ -1011,6 +1045,10 @@
         '.video-js .vjs-big-play-button',
         '.xt-play-button',
         '.xt-startbutton',
+        '.xt_video_player_play_btn',
+        '.xt_video_player_common_icon',
+        '[class*="play"][class*="btn"]',
+        '[class*="player"][class*="play"]',
         '.player-play',
         '.player-start',
         '[class*="play-button"]:not([class*="pause"])',
@@ -1020,28 +1058,40 @@
         const el = doc.querySelector(sel);
         if (el && el.offsetParent !== null) return el;
       }
-      return null;
+      const candidates = [...doc.querySelectorAll('button, [role="button"], div, span')];
+      return candidates.find(el => {
+        if (!el || el.offsetParent === null) return false;
+        const text = String(el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+        const cls = String(el.className || '');
+        return /播放|play/i.test(text) && !/暂停|pause/i.test(`${text} ${cls}`);
+      }) || null;
+    },
+    dispatchUserLikeClick(el) {
+      if (!el) return false;
+      const doc = el.ownerDocument || document;
+      const view = doc.defaultView || window;
+      const rect = el.getBoundingClientRect();
+      const clientX = rect.left + Math.max(1, rect.width / 2);
+      const clientY = rect.top + Math.max(1, rect.height / 2);
+      const base = { bubbles: true, cancelable: true, clientX, clientY, view };
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        const Ctor = type.startsWith('pointer') && view.PointerEvent ? view.PointerEvent : view.MouseEvent;
+        el.dispatchEvent(new Ctor(type, base));
+      }
+      if (typeof el.click === 'function') el.click();
+      return true;
     },
     clickBigPlayButton(media = null) {
       const doc = media?.ownerDocument || document;
       const btn = this.findPlayButton(doc);
       if (btn) {
-        btn.click();
-        return true;
+        return this.dispatchUserLikeClick(btn);
       }
       const video = media || doc.querySelector('video');
       if (video) {
         const rect = video.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
-          const evt = new MouseEvent('click', {
-            bubbles: true,
-            cancelable: true,
-            clientX: rect.left + rect.width / 2,
-            clientY: rect.top + rect.height / 2
-          });
-          video.dispatchEvent(evt);
-          video.click();
-          return true;
+          return this.dispatchUserLikeClick(video);
         }
       }
       return false;
@@ -1166,21 +1216,44 @@
         return { classroomId, type, leafId, nodeId: nodeId || '', source: 'v2/web/cloud' };
       }
       // v2/web/xcloud 路由，例如 /v2/web/xcloud/video-student/{id}/{leafId}
-      const xcloudMatch = location.pathname.match(/^\/v2\/web\/xcloud\/([^/]+)\/([^/]+)(?:\/([^/?#]+))?/);
+      const xcloudMatch = location.pathname.match(/^\/v2\/web\/xcloud\/([^/?#]+)(?:\/(.+))?/);
       if (xcloudMatch) {
-        const [, rawType, firstId = '', secondId = ''] = xcloudMatch;
+        const [, rawType, rest = ''] = xcloudMatch;
         const query = new URLSearchParams(location.search);
+        const parts = rest.split('/').filter(Boolean);
         const classroomId = query.get('classroom_id') || query.get('classroomId') || '';
-        const type = String(rawType || '').replace(/-student$/i, '');
         return {
           classroomId,
-          type,
-          leafId: secondId || firstId,
-          nodeId: query.get('node_id') || firstId || '',
+          type: this.normalizeRouteType(rawType, rest),
+          leafId: parts[parts.length - 1] || query.get('leaf_id') || rawType,
+          nodeId: query.get('node_id') || parts[0] || '',
           source: 'v2/web/xcloud'
         };
       }
+      const v2ContentMatch = location.pathname.match(/^\/v2\/web\/([^/]+)\/(.+)/);
+      if (v2ContentMatch && !location.pathname.includes('/v2/web/studentLog/')) {
+        const [, sourcePart, rest = ''] = v2ContentMatch;
+        const query = new URLSearchParams(location.search);
+        const parts = rest.split('/').filter(Boolean);
+        const type = this.normalizeRouteType(parts[0] || sourcePart, rest);
+        if (this.isMediaRouteType(type) || this.isExerciseRouteType(type)) {
+          return {
+            classroomId: query.get('classroom_id') || query.get('classroomId') || '',
+            type,
+            leafId: parts[parts.length - 1] || query.get('leaf_id') || sourcePart,
+            nodeId: query.get('node_id') || parts[1] || '',
+            source: `v2/web/${sourcePart}`
+          };
+        }
+      }
       return null;
+    },
+    normalizeRouteType(rawType = '', pathText = '') {
+      const text = `${rawType} ${pathText}`.toLowerCase();
+      if (/audio|yinpin|音频/.test(text)) return 'audio';
+      if (/video|shipin|视频/.test(text)) return 'video';
+      if (/exercise|zuoye|lianxi|ceping|kaoshi|作业|练习|测评|考试/.test(text)) return 'exercise';
+      return String(rawType || '').replace(/-student$/i, '');
     },
     isMediaRouteType(type = '') {
       return /^(video|audio|shipin|yinpin)$/.test(String(type).toLowerCase());
@@ -1188,9 +1261,20 @@
     isExerciseRouteType(type = '') {
       return /^(exercise|zuoye|lianxi|ceping|kaoshi)$/.test(String(type).toLowerCase());
     },
+    getAccessibleDocuments() {
+      const docs = [document];
+      for (const iframe of document.querySelectorAll('iframe')) {
+        try {
+          if (iframe.contentDocument) docs.push(iframe.contentDocument);
+        } catch (_) {
+          // cross-origin iframe
+        }
+      }
+      return docs;
+    },
     getMediaCandidates() {
-      return [...document.querySelectorAll('video, audio')].filter(media => {
-        if (!(media instanceof HTMLMediaElement)) return false;
+      return this.getAccessibleDocuments().flatMap(doc => [...doc.querySelectorAll('video, audio')]).filter(media => {
+        if (!/^(video|audio)$/i.test(media.tagName || '')) return false;
         const rect = media.getBoundingClientRect();
         const isVisible = rect.width > 0 && rect.height > 0;
         return isVisible || media.tagName.toLowerCase() === 'audio';
@@ -1198,7 +1282,13 @@
     },
     getMedia() {
       const candidates = this.getMediaCandidates();
-      if (!candidates.length) return document.querySelector('video') || document.querySelector('audio');
+      if (!candidates.length) {
+        for (const doc of this.getAccessibleDocuments()) {
+          const media = doc.querySelector('video') || doc.querySelector('audio');
+          if (media) return media;
+        }
+        return null;
+      }
       const score = media => {
         const rect = media.getBoundingClientRect();
         const area = rect.width * rect.height;
@@ -1216,7 +1306,10 @@
       if (playedDelta < minPlayedDelta) return false;
       if (media?.ended) return true;
       if (duration > 1 && currentTime > 0 && duration - currentTime <= 1) return true;
-      const display = document.querySelector('.xt_video_player_current_time_display')?.innerText?.trim() || '';
+      const doc = media.ownerDocument || document;
+      const display = doc.querySelector('.xt_video_player_current_time_display')?.innerText?.trim()
+        || document.querySelector('.xt_video_player_current_time_display')?.innerText?.trim()
+        || '';
       const [current, total] = display.split(' / ').map(text => text?.trim());
       return Boolean(playedDelta >= minPlayedDelta && current && total && current === total);
     },
@@ -1680,8 +1773,8 @@
       const AUTH_METHOD = saved.authMethod || 'auto';
       return new Promise((resolve, reject) => {
         if (!API_KEY || API_KEY.includes('sk-xxxx')) {
-          const msg = '⚠️ 请在 [AI配置] 中填写有效的 API Key';
-          panel.log(msg);
+          const msg = '请在 [AI配置] 中填写有效的 API Key';
+          panel.log(msg, 'warning');
           reject(msg);
           return;
         }
@@ -1762,7 +1855,7 @@
             cleanupFirstChunkTimer();
             if (res.status < 200 || res.status >= 300) {
               const err = `请求失败: HTTP ${res.status} - ${(res.responseText || '').slice(0, 300)}`;
-              panel.log(err);
+              panel.log(err, 'error');
               settleReject(err);
               return;
             }
@@ -2015,10 +2108,10 @@
       }
 
       if (!inputs.length) {
-        panel.log('⚠️ 未找到填空输入框');
+        panel.log('未找到填空输入框', 'warning');
         return;
       }
-      panel.log(`✅ AI 建议填空：${answers.join('；')}`);
+      panel.log(`AI 建议填空：${answers.join('；')}`);
       for (let i = 0; i < inputs.length; i++) {
         const value = answers[i] || answers[answers.length - 1] || '';
         const input = inputs[i];
@@ -2089,23 +2182,23 @@
 
       if (questionType === 'fillblank') {
         if (!parsed.answers.length) {
-          panel.log('⚠️ 未提取到填空答案，请人工检查');
+          panel.log('未提取到填空答案，请人工检查', 'warning');
           return;
         }
         await this.fillBlanks(parsed.answers, itemBodyElement);
       } else {
         const listContainer = this.getOptionContainer(itemBodyElement);
         if (!listContainer) {
-          panel.log('⚠️ 未找到选项容器');
+          panel.log('未找到选项容器', 'warning');
           return;
         }
         const options = this.getOptionElements(listContainer);
         const targetIndices = this.answerToIndices(parsed, options.length);
         if (!targetIndices.length) {
-          panel.log('⚠️ 未提取到有效选项，请人工检查');
+          panel.log('未提取到有效选项，请人工检查', 'warning');
           return;
         }
-        panel.log(`✅ AI 建议选：${parsed.answers.join(', ')}`);
+        panel.log(`AI 建议选：${parsed.answers.join(', ')}`);
         for (const idx of targetIndices) {
           if (!options[idx]) continue;
           const clickable = options[idx].querySelector('label.el-radio') ||
@@ -2141,7 +2234,7 @@
         panel.log('正在提交...');
         submitBtn.click();
       } else {
-        panel.log('⚠️ 未找到提交按钮，请手动提交');
+        panel.log('未找到提交按钮，请手动提交', 'warning');
       }
     }
   };
@@ -2227,9 +2320,9 @@
           .filter(node => node.nodeType === 1);
         if (!list.length) {
           missingListCount++;
-          this.panel.log('未找到课程列表，稍后重试');
+          this.panel.log('未找到课程列表，稍后重试', 'warning');
           if (missingListCount >= 5) {
-            this.panel.log('多次未找到课程列表，停止遍历（请确认当前在课程目录页）');
+            this.panel.log('多次未找到课程列表，停止遍历（请确认当前在课程目录页）', 'error');
             this.panel.resetStartButton('开始');
             break;
           }
@@ -2259,7 +2352,7 @@
           if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
           if (FailGate.exhausted(failKey)) {
             skippedByLimit++;
-            this.panel.log(`⚠️ ${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`);
+            this.panel.log(`${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`, 'warning');
             continue;
           }
           target = { course, listNode: list[i], type, title, isBatch, isHomework, statusState, failKey, index: i };
@@ -2274,7 +2367,7 @@
             continue;
           }
           if (skippedByLimit > 0) {
-            this.panel.log(`遍历结束：仍有 ${skippedByLimit} 项达到重试上限未完成，请手动检查`);
+            this.panel.log(`遍历结束：仍有 ${skippedByLimit} 项达到重试上限未完成，请手动检查`, 'warning');
             this.panel.resetStartButton('开始');
           } else {
             this.panel.log('课程已全部完成');
@@ -2300,11 +2393,11 @@
         } else if (isHomework) {
           await this.handleHomework(course, failKey);
         } else if (type.includes('kaoshi')) {
-          this.panel.log('考试区域脚本会被屏蔽，已跳过');
+          this.panel.log('考试区域脚本会被屏蔽，已跳过', 'warning');
           FailGate.skip(failKey); // 主动屏蔽，非失败，静默不再进入
           continue; // 未离开目录页，直接重新扫描下一项
         } else {
-          this.panel.log('非视频/批量/课件/考试，已跳过');
+          this.panel.log('非视频/批量/课件/考试，已跳过', 'warning');
           FailGate.skip(failKey);
           continue;
         }
@@ -2343,7 +2436,7 @@
       const progressNode = document.querySelector('.progress-wrap')?.querySelector('.text');
       const title = document.querySelector('.title')?.innerText || '视频';
       const isDeadline = document.querySelector('.box')?.innerText.includes('已过考核截止时间');
-      if (isDeadline) this.panel.log(`${title} 已过截止，进度不再增加，将直接跳过`);
+      if (isDeadline) this.panel.log(`${title} 已过截止，进度不再增加，将直接跳过`, 'warning');
       Player.applySpeed();
       Player.mute();
       const stopObserve = Player.observePause(document.querySelector('video'));
@@ -2353,7 +2446,7 @@
       );
       stopObserve();
       if (ok) this.panel.log(`${title} 播放完成`);
-      else this.panel.log(`${title} 播放完成度未达 100%`);
+      else this.panel.log(`${title} 播放完成度未达 100%`, 'warning');
       await this.returnToList();
     }
 
@@ -2363,7 +2456,7 @@
       // 展开按钮在 section 内；子项列表 .leaf_list__wrap 是列表节点的后代、在 section 之外
       const expandBtn = section?.querySelector('.sub-info')?.querySelector('.gray')?.querySelector('span');
       if (!expandBtn) {
-        this.panel.log(`批量区「${batchTitle}」未找到展开按钮，跳过`);
+        this.panel.log(`批量区「${batchTitle}」未找到展开按钮，跳过`, 'warning');
         if (parentFailKey) FailGate.skip(parentFailKey);
         return;
       }
@@ -2393,7 +2486,7 @@
         const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
         if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
         if (FailGate.exhausted(subKey)) {
-          this.panel.log(`⚠️ ${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`);
+          this.panel.log(`${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`, 'warning');
           continue;
         }
 
@@ -2412,7 +2505,7 @@
         } else if (isHomework) {
           await this.handleHomework(item, subKey);
         } else {
-          this.panel.log(`类型未知，已跳过：${title}`);
+          this.panel.log(`类型未知，已跳过：${title}`, 'warning');
           FailGate.skip(subKey); // 主动跳过，静默，不重载，继续看同批后续子项
           continue;
         }
@@ -2422,7 +2515,7 @@
       // 没有可处理子项：子项或已全部完成、或全部已跳过/超限。
       // 标记批量顶层已跳过，避免 run() 再为这个推不动的批量浪费整页重载。
       if (parentFailKey) FailGate.skip(parentFailKey);
-      this.panel.log(`批量区「${batchTitle}」无可处理子项，继续扫描下一项`);
+      this.panel.log(`批量区「${batchTitle}」无可处理子项，继续扫描下一项`, 'warning');
     }
 
     async playAudioItem(item, title) {
@@ -2452,7 +2545,7 @@
       );
       stopObserve();
       if (ok) this.panel.log(`${title} 播放完成`);
-      else this.panel.log(`${title} 播放完成度未达 100%`);
+      else this.panel.log(`${title} 播放完成度未达 100%`, 'warning');
       await this.returnToList();
     }
 
@@ -2464,7 +2557,7 @@
       // 检查是否开启自动评论功能
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoComment) {
-        this.panel.log(`${typeText}已查看，但未开启自动回复功能`);
+        this.panel.log(`${typeText}已查看，但未开启自动回复功能`, 'warning');
         await this.returnToList();
         return;
       }
@@ -2489,7 +2582,7 @@
         if (!firstComment) await Utils.sleep(500);
       }
       if (!firstComment) {
-        this.panel.log('未找到评论内容，跳过该项');
+        this.panel.log('未找到评论内容，跳过该项', 'warning');
       } else {
         const input = document.querySelector('.el-textarea__inner');
         if (input) {
@@ -2504,10 +2597,10 @@
             sendBtn.click();
             this.panel.log(`已在${typeText}区发表评论`);
           } else {
-            this.panel.log('发送按钮不可用或不存在');
+            this.panel.log('发送按钮不可用或不存在', 'warning');
           }
         } else {
-          this.panel.log('未找到评论输入框，跳过');
+          this.panel.log('未找到评论输入框，跳过', 'warning');
         }
       }
       await this.returnToList();
@@ -2516,7 +2609,7 @@
     async handleHomework(item, failKey = '') {
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoAI) {
-        this.panel.log('已关闭AI自动答题，跳过该项');
+        this.panel.log('已关闭AI自动答题，跳过该项', 'warning');
         if (failKey) FailGate.skip(failKey); // 防御性：正常路径已在扫描阶段跳过作业，不会进到这里
         return;
       }
@@ -2534,7 +2627,7 @@
         }
         const listItem = items[i];
         if (AiWorkspace.isProblemSubmitted(problems[i]) || AiWorkspace.isExerciseTabAnswered(listItem)) {
-          this.panel.log(`第 ${i + 1} 题已提交，跳过...`);
+          this.panel.log(`第 ${i + 1} 题已提交，跳过...`, 'warning');
           i++;
           continue;
         }
@@ -2555,7 +2648,7 @@
           || /已完成|已作答|已提交|回答正确|回答错误|对|✓|✔/.test(listItem.innerText || '');
 
         if (isAnswered) {
-          this.panel.log(`第 ${i + 1} 题已完成，跳过...`);
+          this.panel.log(`第 ${i + 1} 题已完成，跳过...`, 'warning');
           i++;
           continue;
         }
@@ -2564,7 +2657,7 @@
         if (questionType !== 'fillblank') {
           optionCount = Solver.getVisibleOptionCount(targetEl);
           if (!optionCount) {
-            this.panel.log(`第 ${i + 1} 题未找到选项，跳过`);
+            this.panel.log(`第 ${i + 1} 题未找到选项，跳过`, 'warning');
             i++;
             continue;
           }
@@ -2574,21 +2667,21 @@
         while (retryCount < maxRetry && !success) {
           try {
             if (retryCount > 0) {
-              this.panel.log(`🔄 第 ${i + 1} 题重试 ${retryCount}/${maxRetry}...`);
+              this.panel.log(`第 ${i + 1} 题重试 ${retryCount}/${maxRetry}...`, 'warning');
             }
             const imageDataUrl = await Solver.captureQuestionImage(targetEl);
-            panel.log('🤖 请求多模态 AI 获取答案...');
+            panel.log('请求多模态 AI 获取答案...');
             const aiText = await Solver.askAI(imageDataUrl, optionCount, questionType);
             await Solver.autoSelectAndSubmit(aiText, targetEl);
             success = true;
           } catch (err) {
             retryCount++;
-            this.panel.log(`AI 答题失败：${err}`);
+            this.panel.log(`AI 答题失败：${err}`, 'error');
             if (retryCount < maxRetry) {
-              this.panel.log(`等待 5 秒后重试...`);
+              this.panel.log(`等待 5 秒后重试...`, 'warning');
               await Utils.sleep(5000);
             } else {
-              this.panel.log(`⚠️ 第 ${i + 1} 题重试 ${maxRetry} 次后仍失败，跳过`);
+              this.panel.log(`第 ${i + 1} 题重试 ${maxRetry} 次后仍失败，跳过`, 'warning');
             }
           }
         }
@@ -2603,7 +2696,7 @@
         submitAllBtn.click();
         await Utils.sleep(1500);
       } else {
-        this.panel.log('未找到整体交卷按钮，可能已经自动保存');
+        this.panel.log('未找到整体交卷按钮，可能已经自动保存', 'warning');
       }
 
       await this.returnToList();
@@ -2615,7 +2708,7 @@
       await Utils.sleep(5000);
       const iframe = document.querySelector('iframe.lesson-report-mobile');
       if (!iframe || !iframe.contentDocument) {
-        this.panel.log('未找到课堂 iframe，跳过');
+        this.panel.log('未找到课堂 iframe，跳过', 'warning');
         await this.returnToList();
         return;
       }
@@ -2640,7 +2733,7 @@
       const tableData = course.parentNode?.parentNode?.parentNode?.__vue__?.tableData;
       const deadlinePassed = (tableData?.deadline || tableData?.end) ? (tableData.deadline < Date.now() || tableData.end < Date.now()) : false;
       if (deadlinePassed) {
-        this.panel.log(`${course.querySelector('h2')?.innerText || '课件'} 已结课，跳过`);
+        this.panel.log(`${course.querySelector('h2')?.innerText || '课件'} 已结课，跳过`, 'warning');
         await this.returnToList();
         return;
       }
@@ -2801,7 +2894,7 @@
 
         for (let i = 0; i < slides.length; i++) {
           if (readStatuses[i] === true) {
-            this.panel.log(`${className}：第 ${i + 1}/${slides.length} 张已读，跳过`);
+            this.panel.log(`${className}：第 ${i + 1}/${slides.length} 张已读，跳过`, 'warning');
             continue;
           }
           slides[i].scrollIntoView({ behavior: 'instant', block: 'nearest' });
@@ -2810,7 +2903,7 @@
           await Utils.sleep(Config.pptInterval);
         }
       } else {
-        this.panel.log('未找到幻灯片列表，尝试按翻页按钮/键盘翻页...');
+        this.panel.log('未找到幻灯片列表，尝试按翻页按钮/键盘翻页...', 'warning');
         await this.playPPTByNavigation(className);
       }
 
@@ -2821,7 +2914,7 @@
         this.panel.log('PPT 中有视频，继续播放');
         for (let i = 0; i < videoBoxes.length; i++) {
           if (videoBoxes[i].innerText === '已完成') {
-            this.panel.log(`第 ${i + 1} 个视频已完成，跳过`);
+            this.panel.log(`第 ${i + 1} 个视频已完成，跳过`, 'warning');
             continue;
           }
           videoBoxes[i].click();
@@ -2901,7 +2994,7 @@
       while (leafDetail[classCount] && !leafDetail[classCount].firstChild.querySelector('i').className.includes('shipin')) {
         classCount++;
         Store.setProClassCount(classCount + 1);
-        this.panel.log('课程不属于视频，已跳过');
+        this.panel.log('课程不属于视频，已跳过', 'warning');
       }
       leafDetail[classCount]?.click();
     }
@@ -2925,7 +3018,7 @@
           this.panel.log(`正在阅读：${className}`);
           await Utils.sleep(2000);
         } else if (classType.includes('taolun')) {
-          this.panel.log(`讨论区暂不自动发帖，${className}`);
+          this.panel.log(`讨论区暂不自动发帖，${className}`, 'warning');
           await Utils.sleep(2000);
         } else if (classType.includes('shipin') && !classStatus.includes('100%')) {
           this.panel.log(`2s 后开始播放：${className}`);
@@ -2970,13 +3063,13 @@
             if (videoTimer) clearInterval(videoTimer);
           }
         } else if (classType.includes('zuoye')) {
-          this.panel.log(`进入作业：${className}（暂无自动答题）`);
+          this.panel.log(`进入作业：${className}（暂无自动答题）`, 'warning');
           await Utils.sleep(2000);
         } else if (classType.includes('kaoshi')) {
-          this.panel.log(`进入考试：${className}（不会自动答题）`);
+          this.panel.log(`进入考试：${className}（不会自动答题）`, 'warning');
           await Utils.sleep(2000);
         } else if (classType.includes('ketang')) {
-          this.panel.log(`进入课堂：${className}（暂无自动功能）`);
+          this.panel.log(`进入课堂：${className}（暂无自动功能）`, 'warning');
           await Utils.sleep(2000);
         } else {
           this.panel.log(`已看过：${className}`);
@@ -2994,7 +3087,7 @@
           nextBtn.dispatchEvent(new Event('click'));
         } else {
           localStorage.removeItem(Config.storageKeys.proClassCount);
-          this.panel.log('课程播放完毕 🎉');
+          this.panel.log('课程播放完毕');
           Store.clearPendingAutoStart();
           break;
         }
@@ -3060,10 +3153,18 @@
     async handleMedia(route) {
       const title = AiWorkspace.getActiveLeafTitle() || `${route.type} ${route.leafId}`;
       this.panel.log(`开始播放：${title}`);
-      const ready = await Utils.poll(() => Boolean(AiWorkspace.getMedia()), { interval: 500, timeout: 20000 });
+      const ready = await Utils.poll(() => {
+        const media = AiWorkspace.getMedia();
+        if (media) return true;
+        for (const doc of AiWorkspace.getAccessibleDocuments()) {
+          const btn = Player.findPlayButton(doc);
+          if (btn) Player.dispatchUserLikeClick(btn);
+        }
+        return false;
+      }, { interval: 1000, timeout: 45000 });
       let media = AiWorkspace.getMedia();
       if (!ready || !media) {
-        this.panel.log('未找到视频/音频元素，停止当前轮次');
+        this.panel.log('未找到视频/音频元素，停止当前轮次', 'warning');
         return false;
       }
 
@@ -3076,7 +3177,7 @@
       await Player.playFromStart(media);
       const startedImmediately = await Player.startPlayback(media);
       if (!startedImmediately) {
-        this.panel.log('首次播放未确认启动，继续接管并重试');
+        this.panel.log('首次播放未确认启动，继续接管并重试', 'warning');
       }
 
       if (media.tagName.toLowerCase() === 'video') {
@@ -3098,7 +3199,7 @@
           return currentTime > startTime + 0.5 || (!media.paused && media.readyState >= 2 && currentTime > startTime + 0.2);
         }, { interval: 500, timeout: 15000 });
         if (!started) {
-          this.panel.log('未确认到视频实际开始播放，停止当前轮次');
+          this.panel.log('未确认到视频实际开始播放，停止当前轮次', 'warning');
           return false;
         }
         startTime = Number(media.currentTime || 0);
@@ -3128,7 +3229,7 @@
         media.removeEventListener('ended', onEnded);
         playbackState.completed = true;
         if (!done) {
-          this.panel.log('等待播放完成超时，停止当前轮次');
+          this.panel.log('等待播放完成超时，停止当前轮次', 'warning');
           return false;
         }
       } finally {
@@ -3143,11 +3244,11 @@
     async solveExerciseQuestion(root, label = '') {
       const questionRoot = AiWorkspace.getExerciseQuestionBody(root);
       if (!questionRoot) {
-        this.panel.log('未找到题目容器，停止当前轮次');
+        this.panel.log('未找到题目容器，停止当前轮次', 'warning');
         return false;
       }
       if (AiWorkspace.isExerciseAnswered(questionRoot)) {
-        this.panel.log(`${label || '当前题目'} 已完成，跳过`);
+        this.panel.log(`${label || '当前题目'} 已完成，跳过`, 'warning');
         return true;
       }
 
@@ -3156,7 +3257,7 @@
       if (questionType !== 'fillblank') {
         optionCount = Solver.getVisibleOptionCount(questionRoot);
         if (!optionCount) {
-          this.panel.log(`${label || '当前题目'} 未找到选项，跳过`);
+          this.panel.log(`${label || '当前题目'} 未找到选项，跳过`, 'warning');
           return false;
         }
       }
@@ -3164,15 +3265,15 @@
       const maxRetry = Config.aiMaxRetry;
       for (let retryCount = 0; retryCount < maxRetry; retryCount++) {
         try {
-          if (retryCount > 0) this.panel.log(`${label || '当前题目'} 重试 ${retryCount}/${maxRetry - 1}`);
+          if (retryCount > 0) this.panel.log(`${label || '当前题目'} 重试 ${retryCount}/${maxRetry - 1}`, 'warning');
           const imageDataUrl = await Solver.captureQuestionImage(questionRoot);
-          this.panel.log('🤖 请求多模态 AI 获取答案...');
+          this.panel.log('请求多模态 AI 获取答案...');
           const aiText = await Solver.askAI(imageDataUrl, optionCount, questionType);
           await Solver.autoSelectAndSubmit(aiText, questionRoot);
           await Utils.sleep(1200);
           return true;
         } catch (err) {
-          this.panel.log(`AI 答题失败：${err}`);
+          this.panel.log(`AI 答题失败：${err}`, 'error');
           if (retryCount < maxRetry - 1) await Utils.sleep(5000);
         }
       }
@@ -3202,14 +3303,14 @@
     async handleExercise(route) {
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoAI) {
-        this.panel.log('已关闭 AI 自动答题，作业将直接跳过');
+        this.panel.log('已关闭 AI 自动答题，作业将直接跳过', 'warning');
         return true;
       }
 
       const ready = await Utils.poll(() => Boolean(AiWorkspace.getExerciseContainer()), { interval: 500, timeout: 20000 });
       const root = AiWorkspace.getExerciseContainer();
       if (!ready || !root) {
-        this.panel.log('未找到作业容器，停止当前轮次');
+        this.panel.log('未找到作业容器，停止当前轮次', 'warning');
         return false;
       }
 
@@ -3223,14 +3324,14 @@
           const currentTab = currentTabs[i];
           if (!currentTab) break;
           if (this.isExerciseQuestionSubmitted(currentRoot, currentTab, i, false)) {
-            this.panel.log(`第 ${i + 1} 题已提交，跳过`);
+            this.panel.log(`第 ${i + 1} 题已提交，跳过`, 'warning');
             continue;
           }
           currentTab.click();
           await Utils.sleep(1200);
           const latestRoot = AiWorkspace.getExerciseContainer() || currentRoot;
           if (this.isExerciseQuestionSubmitted(latestRoot, currentTab, i, true)) {
-            this.panel.log(`第 ${i + 1} 题已提交，跳过`);
+            this.panel.log(`第 ${i + 1} 题已提交，跳过`, 'warning');
             continue;
           }
           await this.solveExerciseQuestion(latestRoot, `第 ${i + 1} 题`);
@@ -3238,7 +3339,7 @@
         return true;
       }
 
-      this.panel.log('未找到题号列表，尝试只处理当前题并按下一题推进');
+      this.panel.log('未找到题号列表，尝试只处理当前题并按下一题推进', 'warning');
       let previousFingerprint = '';
       for (let i = 0; i < 20; i++) {
         const currentRoot = AiWorkspace.getExerciseContainer() || root;
@@ -3247,7 +3348,7 @@
         if (!fingerprint) break;
         if (i > 0 && fingerprint === previousFingerprint) break;
         if (this.isExerciseQuestionSubmitted(currentRoot, null, i, true)) {
-          this.panel.log(`${this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`} 已提交，跳过`);
+          this.panel.log(`${this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`} 已提交，跳过`, 'warning');
         } else {
           await this.solveExerciseQuestion(currentRoot, this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`);
         }
@@ -3262,11 +3363,11 @@
       preventScreenCheck();
       const route = AiWorkspace.getRoute();
       if (!route) {
-        this.panel.log('当前页面已离开 ai-workspace/lms-graph');
+        this.panel.log('当前页面已离开 ai-workspace/lms-graph', 'warning');
         return;
       }
       if (!route.leafId) {
-        this.panel.log('未能识别当前知识点');
+        this.panel.log('未能识别当前知识点', 'warning');
         return;
       }
       let ok = false;
@@ -3275,10 +3376,13 @@
       } else if (AiWorkspace.isExerciseRouteType(route.type)) {
         ok = await this.handleExercise(route);
       } else {
-        this.panel.log(`当前类型为 ${route.type}，最小方案暂不自动处理`);
+        this.panel.log(`当前类型为 ${route.type}，最小方案暂不自动处理`, 'warning');
         return;
       }
-      if (!ok) return;
+      if (!ok) {
+        await this.returnToSource();
+        return;
+      }
       await this.returnToSource();
     }
   }
@@ -3301,8 +3405,15 @@
     if (matchURL.includes('yuketang.cn/v2/web') || matchURL.includes('gdufemooc.cn/v2/web')) {
       // v2 路线必须在课程列表页运行，避免在单个课件/视频页误启动主循环
       if (!document.querySelector('.logs-list')) {
+        const pendingAutoStart = Store.getPendingAutoStart();
+        const contentRoute = AiWorkspace.getRoute();
+        if (pendingAutoStart?.returnUrl && Utils.isV2ContentPage() && contentRoute) {
+          panel.log(`检测到 V2 内容页，接管处理：${contentRoute.source}/${contentRoute.type}`);
+          new AiWorkspaceRunner(panel).run();
+          return;
+        }
         panel.resetStartButton('开始');
-        panel.log('当前页面不是课程列表（缺少 .logs-list），请返回课程目录页后再开始');
+        panel.log('当前页面不是课程列表（缺少 .logs-list），请返回课程目录页后再开始', 'warning');
         return;
       }
       new V2Runner(panel).run();
@@ -3314,7 +3425,7 @@
       }
     } else {
       panel.resetStartButton('开始');
-      panel.log('当前页面非支持页面，应匹配 */v2/web/*、*/pro/lms/* 或 */ai-workspace/lms-graph/*');
+      panel.log('当前页面非支持页面，应匹配 */v2/web/*、*/pro/lms/* 或 */ai-workspace/lms-graph/*', 'warning');
     }
   }
 
@@ -3334,7 +3445,7 @@
         && Utils.isSupportedLearningPage()
         && (
           (currentClassroomId && pendingAutoStart.classroomId === currentClassroomId)
-          || (!currentClassroomId && contentRoute?.source === 'v2/web/xcloud' && pendingAutoStart.returnUrl)
+          || (!currentClassroomId && Utils.isV2ContentPage() && contentRoute && pendingAutoStart.returnUrl)
         );
       if (
         canResumeCurrentPage
