@@ -90,7 +90,7 @@ Each `V2Runner.run()` pass:
 
 This means progress advances because the server-side DOM status changes after reload, not because the script remembers "the next index".
 
-Startup writes `{classroomId, returnUrl}` into `pendingAutoStart`. It records where to resume, not which item to resume from.
+Startup writes `{classroomId, returnUrl}` into `pendingAutoStart`. It records where to resume, not which item to resume from. V2 item clicks may briefly add `handoff: {type, title, source, ts}` so content pages whose URL/DOM route is ambiguous, including non-`/v2/web` playback pages, can be handled as the clicked media/exercise type; clear this handoff when returning to the catalog scan and do not treat it as a progress cursor.
 
 ## Completion State
 
@@ -157,7 +157,7 @@ Do not make disabled homework cause page entry or reload loops.
 - pause observation
 - end/progress waits
 
-For V2 video startup, preserve the current pattern: `observePause` clicks the large `.play-btn-tip` style UI and calls `video.play()`. Avoid replacing it with only a raw `media.play()`, because the site player often needs UI interaction.
+For V2 video startup, preserve the current pattern: `observePause` immediately calls `video.play()` on real pause signals, then clicks the large `.play-btn-tip` style UI if playback is still paused. Avoid replacing it with only a raw `media.play()`, because the site player often needs UI interaction. Keep any polling here low-frequency; pause recovery should be event-driven first.
 
 ## Solver
 

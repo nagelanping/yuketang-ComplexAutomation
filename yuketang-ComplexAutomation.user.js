@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.12
+// @version      1.0.1
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -103,6 +103,10 @@
       if (!text) return false;
       return text.includes('100%') || text.includes('99%') || text.includes('98%') || text.includes('已完成');
     },
+    // 完成状态文案
+    stateLabel(state) {
+      return { completed: '已完成', in_progress: '进行中', not_started: '未开始' }[state] || '未知';
+    },
     // 主要是规避firefox会创建多个iframe的问题
     inIframe() {
       return window.top !== window.self;
@@ -201,7 +205,6 @@
         maxTokens: Number(saved.maxTokens || 0),
         stream: saved.stream ?? true,
       };
-      localStorage.setItem(Config.storageKeys.ai, JSON.stringify(conf));
       return conf;
     },
     setAIConf(conf) {
@@ -214,6 +217,9 @@
     setProClassCount(count) {
       localStorage.setItem(Config.storageKeys.proClassCount, count);
     },
+    clearProClassCount() {
+      localStorage.removeItem(Config.storageKeys.proClassCount);
+    },
     getFeatureConf() {
       const raw = localStorage.getItem(Config.storageKeys.feature);
       const saved = Utils.safeJSONParse(raw, {}) || {};
@@ -222,7 +228,6 @@
         autoComment: saved.autoComment ?? false,
         fontPatch: saved.fontPatch ?? false,
       };
-      localStorage.setItem(Config.storageKeys.feature, JSON.stringify(conf));
       return conf;
     },
     setFeatureConf(conf) {
@@ -238,14 +243,32 @@
       }
       return saved;
     },
-    setPendingAutoStart(classroomId = '', returnUrl = '') {
+    getPendingHandoff(maxAge = 5 * 60 * 1000) {
+      const pending = this.getPendingAutoStart();
+      const handoff = pending?.handoff;
+      if (!handoff?.type || !handoff.ts) return null;
+      if (Date.now() - handoff.ts > maxAge) return null;
+      return handoff;
+    },
+    setPendingAutoStart(classroomId = '', returnUrl = '', extra = {}) {
       if (!classroomId) return;
       const prev = this.getPendingAutoStart() || {};
-      localStorage.setItem(Config.storageKeys.pendingAutoStart, JSON.stringify({
+      const next = {
         classroomId,
         returnUrl: returnUrl || prev.returnUrl || '',
         ts: Date.now()
-      }));
+      };
+      if (Object.prototype.hasOwnProperty.call(extra, 'handoff')) {
+        if (extra.handoff) {
+          next.handoff = {
+            ...extra.handoff,
+            ts: Date.now()
+          };
+        }
+      } else if (prev.handoff) {
+        next.handoff = prev.handoff;
+      }
+      localStorage.setItem(Config.storageKeys.pendingAutoStart, JSON.stringify(next));
     },
     clearPendingAutoStart() {
       localStorage.removeItem(Config.storageKeys.pendingAutoStart);
@@ -1135,14 +1158,21 @@
       const doc = video.ownerDocument || document;
       const target = doc.getElementsByClassName('play-btn-tip')[0];
       let retryTimer = null;
-      let pauseCheckTimer = null;
+      let resumeCheckTimer = null;
+      let watchdogTimer = null;
       let lastResumeAt = 0;
+      let lastClickResumeAt = 0;
       let lastTime = Number(video.currentTime || 0);
       let lastProgressAt = Date.now();
       const clearRetry = () => {
         if (!retryTimer) return;
         clearTimeout(retryTimer);
         retryTimer = null;
+      };
+      const clearResumeCheck = () => {
+        if (!resumeCheckTimer) return;
+        clearTimeout(resumeCheckTimer);
+        resumeCheckTimer = null;
       };
       const noteProgress = () => {
         const currentTime = Number(video.currentTime || 0);
@@ -1151,37 +1181,65 @@
           lastTime = currentTime;
         }
       };
-      const shouldAttemptResume = () => {
+      const shouldAttemptResume = (force = false) => {
         if (!shouldResume() || video.ended || this.isNearEnd(video)) return;
         noteProgress();
-        return video.paused && Date.now() - lastProgressAt > 1500;
+        return video.paused && (force || Date.now() - lastProgressAt > 1500);
       };
-      // 自动播放；只在媒体进度确实停滞时恢复，避免 UI 状态误报导致反复点击。
-      const playVideo = (withClick = false) => {
-        if (!shouldAttemptResume()) return;
+      // 自动播放：暂停事件立即尝试恢复；低频 watchdog 只处理漏掉的状态变化。
+      const playVideo = (withClick = false, force = false) => {
+        if (!shouldAttemptResume(force)) return;
         const now = Date.now();
-        if (now - lastResumeAt < 2000) return;
+        if (withClick) {
+          if (now - lastClickResumeAt < 1200) return;
+          lastClickResumeAt = now;
+        } else if (now - lastResumeAt < 350) {
+          return;
+        }
         lastResumeAt = now;
         this.prepareMedia(video);
         if (withClick) this.clickBigPlayButton(video);
         video.play().catch(e => {
-          if (!shouldAttemptResume()) return;
+          if (!shouldAttemptResume(force)) return;
           console.warn('自动播放失败:', e);
           clearRetry();
-          retryTimer = setTimeout(() => playVideo(true), 3000);
+          retryTimer = setTimeout(() => playVideo(true, true), 1200);
         });
       };
-      playVideo(false);
-      const intervalTimer = setInterval(() => {
+      const requestResume = (withClick = false, force = false, delay = 0) => {
+        clearResumeCheck();
+        const run = () => {
+          resumeCheckTimer = null;
+          playVideo(withClick, force);
+          if (force && !withClick) {
+            clearResumeCheck();
+            resumeCheckTimer = setTimeout(() => {
+              resumeCheckTimer = null;
+              playVideo(true, true);
+            }, 350);
+          }
+        };
+        if (delay > 0) resumeCheckTimer = setTimeout(run, delay);
+        else run();
+      };
+      requestResume(false, true);
+      const watchdog = () => {
         noteProgress();
         playVideo(false);
-      }, 3000);
-      const onPause = () => {
-        clearTimeout(pauseCheckTimer);
-        pauseCheckTimer = setTimeout(() => playVideo(false), 1500);
       };
-      const onSignal = () => playVideo(false);
+      watchdogTimer = setInterval(watchdog, 10000);
+      const onPause = () => requestResume(false, true);
+      const onProgress = () => {
+        noteProgress();
+        if (!video.paused) clearRetry();
+      };
+      const onSignal = () => requestResume(false, false);
+      const onStall = () => requestResume(false, false, 800);
       video.addEventListener('pause', onPause);
+      video.addEventListener('timeupdate', onProgress);
+      video.addEventListener('playing', onProgress);
+      video.addEventListener('waiting', onStall);
+      video.addEventListener('stalled', onStall);
       doc.addEventListener('visibilitychange', onSignal);
       const view = doc.defaultView || window;
       view.addEventListener('focus', onSignal);
@@ -1193,9 +1251,9 @@
             if (
               (mutation.type === 'childList' || mutation.type === 'characterData')
               && /播放|play/i.test(target.innerText || '')
-              && shouldAttemptResume()
+              && shouldAttemptResume(true)
             ) {
-              playVideo(false);
+              requestResume(false, true);
             }
           }
         });
@@ -1203,9 +1261,13 @@
       }
       return () => {
         clearRetry();
-        clearTimeout(pauseCheckTimer);
-        clearInterval(intervalTimer);
+        clearResumeCheck();
+        clearInterval(watchdogTimer);
         video.removeEventListener('pause', onPause);
+        video.removeEventListener('timeupdate', onProgress);
+        video.removeEventListener('playing', onProgress);
+        video.removeEventListener('waiting', onStall);
+        video.removeEventListener('stalled', onStall);
         doc.removeEventListener('visibilitychange', onSignal);
         view.removeEventListener('focus', onSignal);
         if (observer) observer.disconnect();
@@ -1299,15 +1361,37 @@
       }
       const genericV2Route = this.getGenericV2ContentRoute();
       if (genericV2Route) return genericV2Route;
+      const handoffRoute = this.getPendingHandoffRoute();
+      if (handoffRoute) return handoffRoute;
       return null;
+    },
+    getPendingHandoffRoute() {
+      const handoff = Store.getPendingHandoff();
+      if (!handoff) return null;
+      const type = this.normalizeRouteType(handoff.type, handoff.type);
+      if (!this.isMediaRouteType(type) && !this.isExerciseRouteType(type)) return null;
+      const pending = Store.getPendingAutoStart();
+      const query = new URLSearchParams(location.search);
+      const parts = location.pathname.split('/').filter(Boolean);
+      return {
+        classroomId: query.get('classroom_id') || query.get('classroomId') || query.get('cid') || pending?.classroomId || '',
+        type,
+        leafId: query.get('leaf_id') || query.get('leafId') || parts[parts.length - 1] || handoff.title || '',
+        nodeId: query.get('node_id') || query.get('nodeId') || '',
+        source: 'pending-handoff'
+      };
     },
     getGenericV2ContentRoute() {
       if (!Utils.isV2ContentPage()) return null;
       const query = new URLSearchParams(location.search);
       const pathText = decodeURIComponent(`${location.pathname} ${location.search}`);
       let type = this.normalizeRouteType(pathText, pathText);
+      const handoff = Store.getPendingHandoff();
+      const handoffType = this.normalizeRouteType(handoff?.type || '', handoff?.type || '');
       if (!this.isMediaRouteType(type) && !this.isExerciseRouteType(type)) {
-        if (this.getMediaCandidates().length || document.querySelector('.play-btn-tip, .video-js, xt-player, xt-wrap')) {
+        if (this.isMediaRouteType(handoffType) || this.isExerciseRouteType(handoffType)) {
+          type = handoffType;
+        } else if (this.getMediaCandidates().length || document.querySelector('.play-btn-tip, .video-js, xt-player, xt-wrap')) {
           type = 'video';
         } else {
           type = 'content';
@@ -1317,9 +1401,9 @@
       return {
         classroomId: query.get('classroom_id') || query.get('classroomId') || query.get('cid') || '',
         type,
-        leafId: query.get('leaf_id') || query.get('leafId') || parts[parts.length - 1] || '',
+        leafId: query.get('leaf_id') || query.get('leafId') || parts[parts.length - 1] || handoff?.title || '',
         nodeId: query.get('node_id') || query.get('nodeId') || '',
-        source: 'v2/web/content'
+        source: handoff ? 'v2/web/content+handoff' : 'v2/web/content'
       };
     },
     normalizeRouteType(rawType = '', pathText = '') {
@@ -1375,11 +1459,10 @@
     isPlayerDone(media, { startTime = 0, minPlayedDelta = 0 } = {}) {
       if (!media) return false;
       const currentTime = Number(media?.currentTime || 0);
-      const duration = Number(media?.duration || 0);
       const playedDelta = Math.max(0, currentTime - startTime);
       if (playedDelta < minPlayedDelta) return false;
       if (media?.ended) return true;
-      if (duration > 1 && currentTime > 0 && duration - currentTime <= 1) return true;
+      if (Player.isNearEnd(media)) return true;
       const doc = media.ownerDocument || document;
       const display = doc.querySelector('.xt_video_player_current_time_display')?.innerText?.trim()
         || document.querySelector('.xt_video_player_current_time_display')?.innerText?.trim()
@@ -1434,7 +1517,7 @@
       };
     },
     getActiveLeafTitle() {
-      return document.querySelector('.leaf-item.is-active')?.innerText?.replace(/\s+/g, ' ').trim() || '';
+      return this.normalizeText(document.querySelector('.leaf-item.is-active')?.innerText);
     },
     getExerciseDocument() {
       const localHasExercise = document.querySelector('#app .container-body .container-problem')
@@ -2343,6 +2426,14 @@
   };
 
   // ---- v2 逻辑 ----
+  // PPT 页码指示器选择器（resolveSlides 与 playPPTByNavigation 共用）
+  const PPT_INDICATOR_SELECTORS = [
+    '.swiper-pagination-bullet-active',
+    '.page-indicator',
+    '.ppt-page-number',
+    '[class*="pagination"][class*="active"]'
+  ];
+
   class V2Runner {
     constructor(panel) {
       this.panel = panel;
@@ -2376,6 +2467,17 @@
         return true;
       }
       return false;
+    }
+
+    markHandoff(type, title = '') {
+      this.setCourseListUrl();
+      Store.setPendingAutoStart(this.classroomId, this.courseListUrl || location.href, {
+        handoff: {
+          type,
+          title,
+          source: 'v2'
+        }
+      });
     }
 
     clickInCurrentTab(element) {
@@ -2513,6 +2615,7 @@
         // 按 DOM 顺序找第一个"未完成且未达重试上限"的可处理项
         let target = null;
         let skippedByLimit = 0;
+        const autoAI = Store.getFeatureConf().autoAI;
         for (let i = 0; i < list.length; i++) {
           const course = list[i]?.querySelector('.content-box')?.querySelector('section');
           if (!course) continue;
@@ -2525,7 +2628,7 @@
           const statusState = this.getCompletionState(statusText);
           if (statusState === 'completed') continue; // 顶层已完成（含整批完成）一律跳过
           // 关闭 AI 作答时进入纯刷视频模式：作业类项直接无视，不进入、不重载
-          if (isHomework && !isBatch && !Store.getFeatureConf().autoAI) continue;
+          if (isHomework && !isBatch && !autoAI) continue;
           const failKey = FailGate.key(this.classroomId, i, title);
           if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
           if (FailGate.exhausted(failKey)) {
@@ -2556,12 +2659,12 @@
         }
 
         const { course, listNode, type, title, isBatch, isHomework, statusState, failKey } = target;
-        const stateLabel = { completed: '已完成', in_progress: '进行中', not_started: '未开始' }[statusState] || '未知';
+        const stateLabel = Utils.stateLabel(statusState);
         this.panel.log(`处理第 ${target.index + 1}/${list.length} 项，类型 ${type}，状态 ${stateLabel}，标题：${title}`);
         FailGate.bump(failKey); // 进入前先记一次尝试，处理后整页重载会重新扫描复查
 
         if (type.includes('shipin')) {
-          await this.handleVideo(course);
+          await this.handleVideo(course, title);
         } else if (isBatch) {
           await this.handleBatch(listNode, failKey);
         } else if (type.includes('ketang')) {
@@ -2607,7 +2710,8 @@
       return lastLength > previousLength;
     }
 
-    async handleVideo(course) {
+    async handleVideo(course, catalogTitle = '视频') {
+      this.markHandoff('video', catalogTitle);
       this.clickInCurrentTab(course);
       if (await this.waitForExternalHandoff(1500)) return;
       await Utils.sleep(3000);
@@ -2645,7 +2749,7 @@
         const playedDelta = Math.max(0, currentTime - replayStartTime);
         if (playedDelta < minDelta) return false;
         if (video.ended) return true;
-        return Number.isFinite(duration) && duration > 1 && currentTime > 0 && duration - currentTime <= 1;
+        return Player.isNearEnd(video);
       };
       const ok = await Utils.poll(
         () => isDeadline || Utils.isProgressDone(progressNode?.innerHTML) || replayReachedEnd(),
@@ -2676,6 +2780,7 @@
       );
       const activities = [...(listNode.querySelector('.leaf_list__wrap')?.querySelectorAll('.activity__wrap') || [])];
       this.panel.log(`进入批量区「${batchTitle}」，共 ${activities.length} 项，定位第一个未完成子项...`);
+      const autoAI = Store.getFeatureConf().autoAI;
 
       // 只处理第一个未完成且未超限的子项，处理完整页重载后重新进入复查
       for (let i = 0; i < activities.length; i++) {
@@ -2689,7 +2794,7 @@
         const statusState = this.getCompletionState(statusText);
         if (statusState === 'completed') continue;
         // 关闭 AI 作答时纯刷视频：作业子项直接无视，不进入、不重载
-        if (isHomework && !Store.getFeatureConf().autoAI) continue;
+        if (isHomework && !autoAI) continue;
 
         const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
         if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
@@ -2698,7 +2803,7 @@
           continue;
         }
 
-        const stateLabel = { completed: '已完成', in_progress: '进行中', not_started: '未开始' }[statusState] || '未知';
+        const stateLabel = Utils.stateLabel(statusState);
         this.panel.log(`处理批量子项 ${i + 1}/${activities.length}：${title}（状态 ${stateLabel}）`);
         FailGate.bump(subKey);
         // 子项有实际进展：重置批量顶层计数，避免多子项的正常推进误触发顶层重试上限
@@ -2728,6 +2833,7 @@
 
     async playAudioItem(item, title) {
       this.panel.log(`开始播放音频：${title}`);
+      this.markHandoff('audio', title);
       this.clickInCurrentTab(item);
       if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
@@ -2740,6 +2846,7 @@
 
     async playVideoItem(item, title) {
       this.panel.log(`开始播放视频：${title}`);
+      this.markHandoff('video', title);
       this.clickInCurrentTab(item);
       if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
@@ -2815,6 +2922,7 @@
         return;
       }
       this.panel.log('进入作业，启动截图 + 多模态 AI');
+      this.markHandoff('exercise', item.querySelector('h2')?.innerText?.trim() || '作业');
       item.click();
       await Utils.poll(() => {
         const exerciseDoc = AiWorkspace.getExerciseDocument() || document;
@@ -2978,17 +3086,11 @@
       }
       const video = iframe.contentDocument.querySelector('video');
       const audio = iframe.contentDocument.querySelector('audio');
-      if (video) {
-        await Player.playFromStart(video);
-        await Player.startPlayback(video);
-        Player.applyMediaDefault(video);
-        await Player.waitForEnd(video);
-      }
-      if (audio) {
-        await Player.playFromStart(audio);
-        await Player.startPlayback(audio);
-        Player.applyMediaDefault(audio);
-        await Player.waitForEnd(audio);
+      for (const media of [video, audio].filter(Boolean)) {
+        await Player.playFromStart(media);
+        await Player.startPlayback(media);
+        Player.applyMediaDefault(media);
+        await Player.waitForEnd(media);
       }
       await this.returnToList();
     }
@@ -3041,7 +3143,7 @@
     }
 
     getSlideReadStatus(slide) {
-      if (!slide) return 'unknown';
+      if (!slide) return false;
       const cls = slide.className || '';
       // 明确的已读标记
       const readClasses = ['read', 'is-read', 'visited', 'completed', 'done', 'is-viewed', 'watched'];
@@ -3054,25 +3156,14 @@
       }
       const text = (slide.innerText || '').trim();
       if (/已读|已完成|已观看/.test(text)) return true;
-
-      // active/current 只代表当前页，不代表已读
-      const activeClasses = ['active', 'is-active', 'current', 'swiper-slide-active'];
-      for (const c of activeClasses) {
-        if (cls.includes(c)) return 'unknown';
-      }
-      return 'unknown';
+      // active/current 只代表当前页，不代表已读，按未读处理
+      return false;
     }
 
     resolveSlides(slideSelectors) {
       // 先尝试从页码指示器获取真实总页数
-      const indicatorSelectors = [
-        '.swiper-pagination-bullet-active',
-        '.page-indicator',
-        '.ppt-page-number',
-        '[class*="pagination"][class*="active"]'
-      ];
       let expectedCount = 0;
-      for (const sel of indicatorSelectors) {
+      for (const sel of PPT_INDICATOR_SELECTORS) {
         const el = document.querySelector(sel);
         const text = el?.innerText?.trim() || '';
         const m = text.match(/(\d+)\s*\/\s*(\d+)/);
@@ -3218,10 +3309,7 @@
       const maxPages = 200;
 
       while (sameCount < 3 && pageNum < maxPages) {
-        const indicator = document.querySelector('.swiper-pagination-bullet-active')
-          || document.querySelector('.page-indicator')
-          || document.querySelector('.ppt-page-number')
-          || document.querySelector('[class*="pagination"][class*="active"]');
+        const indicator = PPT_INDICATOR_SELECTORS.reduce((found, sel) => found || document.querySelector(sel), null);
         const currentPage = indicator?.innerText?.trim() || '';
 
         if (currentPage && currentPage === lastPage) {
@@ -3271,13 +3359,14 @@
     }
     async run() {
       preventScreenCheck();
+      const readClassStatus = () => document.querySelector('#app > div.app_index-wrapper > div.wrap > div.viewContainer.heightAbsolutely > div > div > div > div > section.title')?.lastElementChild?.innerText || '';
       let classCount = Store.getProClassCount();
       while (true) {
         this.panel.log(`准备播放第 ${classCount} 集...`);
         await Utils.sleep(2000);
         const className = document.querySelector('.header-bar')?.firstElementChild?.innerText || '';
         const classType = document.querySelector('.header-bar')?.firstElementChild?.firstElementChild?.getAttribute('class') || '';
-        const classStatus = document.querySelector('#app > div.app_index-wrapper > div.wrap > div.viewContainer.heightAbsolutely > div > div > div > div > section.title')?.lastElementChild?.innerText || '';
+        const classStatus = readClassStatus();
         if (classType.includes('tuwen') && !classStatus.includes('已读')) {
           this.panel.log(`正在阅读：${className}`);
           await Utils.sleep(2000);
@@ -3291,7 +3380,7 @@
           let videoTimer;
           try {
             statusTimer = setInterval(() => {
-              const status = document.querySelector('#app > div.app_index-wrapper > div.wrap > div.viewContainer.heightAbsolutely > div > div > div > div > section.title')?.lastElementChild?.innerText || '';
+              const status = readClassStatus();
               if (Utils.isProgressDone(status)) {
                 this.panel.log(`${className} 播放完毕`);
                 clearInterval(statusTimer);
@@ -3319,7 +3408,7 @@
 
             await Utils.sleep(8000);
             await Utils.poll(() => {
-              const status = document.querySelector('#app > div.app_index-wrapper > div.wrap > div.viewContainer.heightAbsolutely > div > div > div > div > section.title')?.lastElementChild?.innerText || '';
+              const status = readClassStatus();
               return Utils.isProgressDone(status);
             }, { interval: 1000, timeout: await Utils.getDDL() });
           } finally {
@@ -3350,7 +3439,7 @@
           nextBtn.dispatchEvent(event1);
           nextBtn.dispatchEvent(new Event('click'));
         } else {
-          localStorage.removeItem(Config.storageKeys.proClassCount);
+          Store.clearProClassCount();
           this.panel.log('课程播放完毕');
           Store.clearPendingAutoStart();
           break;
@@ -3665,8 +3754,9 @@
   function start() {
     const classroomId = Utils.getCurrentClassroomId();
     const returnUrl = location.pathname.includes('/v2/web/studentLog/') ? location.href : '';
-    if (!Utils.isV2ContentPage() || returnUrl) {
-      Store.setPendingAutoStart(classroomId, returnUrl);
+    const pendingHandoff = Store.getPendingHandoff();
+    if (returnUrl || (!pendingHandoff && !Utils.isV2ContentPage())) {
+      Store.setPendingAutoStart(classroomId, returnUrl, { handoff: null });
     }
     const aiRoute = AiWorkspace.getRoute();
     if (aiRoute) {
@@ -3716,16 +3806,17 @@
       panel.setStartHandler(start);
       const pendingAutoStart = Store.getPendingAutoStart();
       const currentClassroomId = Utils.getCurrentClassroomId();
+      const pendingHandoff = Store.getPendingHandoff();
       const isV2ContinuationPage = Utils.isV2ContentPage() && pendingAutoStart?.returnUrl;
+      const isHandoffContinuationPage = Boolean(pendingHandoff && pendingAutoStart?.returnUrl);
       const canResumeCurrentPage = pendingAutoStart
-        && Utils.isSupportedLearningPage()
+        && (Utils.isSupportedLearningPage() || isHandoffContinuationPage)
         && (
           isV2ContinuationPage
+          || isHandoffContinuationPage
           || (currentClassroomId && pendingAutoStart.classroomId === currentClassroomId)
         );
-      if (
-        canResumeCurrentPage
-      ) {
+      if (canResumeCurrentPage) {
         panel.log(`检测到跨页面跳转，自动恢复刷课：课堂 ${currentClassroomId || pendingAutoStart.classroomId}`);
         setTimeout(() => panel.start(), 1200);
       }
