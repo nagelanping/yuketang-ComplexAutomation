@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.7.2
+// @version      0.9.0
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -38,11 +38,11 @@
     aiMaxOutputTokens: 2048, // 兼容 CoT 模型，避免 thinking 阶段截断
     aiMaxRetry: 3,        // 作业题目最大重试次数
     storageKeys: {        // 使用者勿动
-      progress: '[雨课堂脚本]刷课进度信息',
       ai: 'ykt_ai_conf',
       proClassCount: 'pro_lms_classCount',
       feature: 'ykt_feature_conf', // 是否开启AI作答/自动评论
-      pendingAutoStart: 'ykt_pending_auto_start'
+      pendingAutoStart: 'ykt_pending_auto_start',
+      failCounts: 'ykt_fail_counts' // 会话级：记录反复推不动的章节及尝试次数
     }
   };
 
@@ -183,27 +183,6 @@
 
   // ---- 存储工具 ----
   const Store = {
-    getProgress(url) {
-      const raw = localStorage.getItem(Config.storageKeys.progress);
-      const all = Utils.safeJSONParse(raw, {}) || { url: { outside: 0, inside: 0 } };
-      if (!all[url]) {
-        all[url] = { outside: 0, inside: 0 };
-        localStorage.setItem(Config.storageKeys.progress, JSON.stringify(all));
-      }
-      return { all, current: all[url] };
-    },
-    setProgress(url, outside, inside = 0) {
-      const raw = localStorage.getItem(Config.storageKeys.progress);
-      const all = Utils.safeJSONParse(raw, {});
-      all[url] = { outside, inside };
-      localStorage.setItem(Config.storageKeys.progress, JSON.stringify(all));
-    },
-    removeProgress(url) {
-      const raw = localStorage.getItem(Config.storageKeys.progress);
-      const all = Utils.safeJSONParse(raw, {});
-      delete all[url];
-      localStorage.setItem(Config.storageKeys.progress, JSON.stringify(all));
-    },
     getAIConf() {
       const raw = localStorage.getItem(Config.storageKeys.ai);
       const saved = Utils.safeJSONParse(raw, {}) || {};
@@ -271,6 +250,59 @@
     },
     clearPendingAutoStart() {
       localStorage.removeItem(Config.storageKeys.pendingAutoStart);
+    }
+  };
+
+  // ---- 失败计数闸门 ----
+  // 纯 DOM 进度驱动遍历的安全阀：记录"反复进入仍推不动"的章节及尝试次数，
+  // 同一项满 maxAttempts 次仍未完成则跳过，避免已过截止/AI 答不全/进度回写延迟等场景死循环。
+  // 用 sessionStorage：关闭标签页即清空，绝不跨会话残留，不承担"记忆刷到第几个"的职责。
+  const FailGate = {
+    maxAttempts: 3,
+    _read() {
+      return Utils.safeJSONParse(sessionStorage.getItem(Config.storageKeys.failCounts), {}) || {};
+    },
+    _write(map) {
+      sessionStorage.setItem(Config.storageKeys.failCounts, JSON.stringify(map));
+    },
+    key(...parts) {
+      return parts.map(p => String(p ?? '').replace(/\s+/g, ' ').trim()).join('||');
+    },
+    get(key) {
+      return Number(this._read()[key] || 0);
+    },
+    bump(key) {
+      const map = this._read();
+      map[key] = Number(map[key] || 0) + 1;
+      this._write(map);
+      return map[key];
+    },
+    exhausted(key) {
+      return this.get(key) >= this.maxAttempts;
+    },
+    exhaust(key) {
+      const map = this._read();
+      map[key] = this.maxAttempts;
+      this._write(map);
+    },
+    // 主动跳过（考试/未知类型/功能关闭）：用哨兵值标记，与"失败耗尽"区分，扫描时静默略过、不告警
+    skip(key) {
+      const map = this._read();
+      map[key] = -1;
+      this._write(map);
+    },
+    skipped(key) {
+      return this._read()[key] === -1;
+    },
+    reset(key) {
+      const map = this._read();
+      if (key in map) {
+        delete map[key];
+        this._write(map);
+      }
+    },
+    clear() {
+      sessionStorage.removeItem(Config.storageKeys.failCounts);
     }
   };
 
@@ -682,7 +714,7 @@
               </div>
               <div class="footer">
                 <button id="btn-setting" class="btn-secondary">模型设置</button>
-                <button id="btn-clear" class="btn-danger">清除进度</button>
+                <button id="btn-clear" class="btn-danger">清除失败记录</button>
                 <button id="btn-pause" class="btn-secondary" style="display:none;">暂停</button>
                 <button id="btn-start" class="btn-primary">开始</button>
               </div>
@@ -833,10 +865,9 @@
     };
 
     ui.btnClear.onclick = () => {
-      Store.removeProgress(window.parent.location.href);
-      localStorage.removeItem(Config.storageKeys.proClassCount);
+      FailGate.clear();
       Store.clearPendingAutoStart();
-      log('已清除当前课程的刷课进度');
+      log('已清除本会话记住的失败章节与重试次数');
     };
 
     let startHandler = null;
@@ -2110,9 +2141,7 @@
       this.panel = panel;
       this.baseUrl = location.href;
       this.courseListUrl = '';
-      const { current } = Store.getProgress(this.baseUrl);
-      this.outside = current.outside;
-      this.inside = current.inside;
+      this.classroomId = Utils.getCurrentClassroomId() || this.baseUrl;
       this.shouldStop = false;
     }
 
@@ -2132,12 +2161,6 @@
       await Utils.sleep(1500);
     }
 
-    updateProgress(outside, inside = 0) {
-      this.outside = outside;
-      this.inside = inside;
-      Store.setProgress(this.baseUrl, outside, inside);
-    }
-
     async waitForExternalHandoff(timeout = 1200) {
       await Utils.sleep(timeout);
       if (document.visibilityState === 'hidden' || !document.hasFocus()) {
@@ -2148,30 +2171,28 @@
       return false;
     }
 
-    checkCompletionStatus(statusText) {
-      // 1. 检查明确的完成状态文本
-      if (statusText.includes('已完成') || statusText.includes('已读')) {
-        return true;
+    // 三态分类：'completed' | 'in_progress' | 'not_started'
+    // 对应雨课堂右侧状态列：已完成/已读、(N/M 或 x%) 进行中、未开始/未读
+    getCompletionState(statusText) {
+      const text = String(statusText || '');
+      // 1. 数字比例优先：N/N 完成，N/M(N<M) 进行中，0/M 未开始
+      const fractionMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
+      if (fractionMatch) {
+        const current = parseInt(fractionMatch[1], 10);
+        const total = parseInt(fractionMatch[2], 10);
+        if (total > 0 && current >= total) return 'completed';
+        return current > 0 ? 'in_progress' : 'not_started';
       }
-
-      // 2. 检查明确的未完成状态文本
-      if (statusText.includes('未开始') || statusText.includes('未读') || statusText.includes('进行中')) {
-        return false;
+      // 2. 百分比：100% 完成，其余进行中
+      const percentMatch = text.match(/(\d+)\s*%/);
+      if (percentMatch) {
+        return parseInt(percentMatch[1], 10) >= 100 ? 'completed' : 'in_progress';
       }
-
-      // 3. 检查学习进度数字比例
-      const progressMatch = statusText.match(/(\d+)\/(\d+)/);
-      if (progressMatch) {
-        const [, current, total] = progressMatch;
-        const currentNum = parseInt(current, 10);
-        const totalNum = parseInt(total, 10);
-        
-        // 根据数字进度判断：相等且大于0表示已完成
-        return currentNum === totalNum && totalNum > 0;
-      }
-
-      // 默认返回false（未完成）
-      return false;
+      // 3. 文本状态
+      if (text.includes('已完成') || text.includes('已读')) return 'completed';
+      if (text.includes('进行中')) return 'in_progress';
+      // 未开始 / 未读 / 其他默认按未开始处理
+      return 'not_started';
     }
 
     isBatchActivity(type = '', tagText = '') {
@@ -2186,85 +2207,102 @@
     }
 
     async run() {
-      this.panel.log(`检测到已播放到第 ${this.outside} 集，继续刷课...`);
+      this.panel.log('开始按目录进度遍历，定位第一个未完成项...');
       let missingListCount = 0;
       while (true) {
+        if (this.shouldStop) return;
         await this.autoSlide();
-        const list = document.querySelector('.logs-list')?.childNodes;
-        if (!list || !list.length) {
+        const list = [...(document.querySelector('.logs-list')?.childNodes || [])]
+          .filter(node => node.nodeType === 1);
+        if (!list.length) {
           missingListCount++;
-          if (missingListCount <= 3) {
-            this.panel.log('未找到课程列表，稍后重试');
+          this.panel.log('未找到课程列表，稍后重试');
+          if (missingListCount >= 5) {
+            this.panel.log('多次未找到课程列表，停止遍历（请确认当前在课程目录页）');
+            this.panel.resetStartButton('开始');
+            break;
           }
           await Utils.sleep(2000);
           continue;
         }
         missingListCount = 0;
         this.setCourseListUrl();
-        console.log(`当前集数:${this.outside}/全部集数${list.length}`);
-        if (this.outside >= list.length) {
-          const loadedMore = await this.ensureCourseListLoadedPast(this.outside, list.length);
-          if (loadedMore) {
-            this.panel.log('课程列表尚未加载完整，继续扫描后续章节');
+
+        // 按 DOM 顺序找第一个"未完成且未达重试上限"的可处理项
+        let target = null;
+        let skippedByLimit = 0;
+        for (let i = 0; i < list.length; i++) {
+          const course = list[i]?.querySelector('.content-box')?.querySelector('section');
+          if (!course) continue;
+          const type = course.querySelector('.tag')?.querySelector('use')?.getAttribute('xlink:href') || 'piliang';
+          const tagText = course.querySelector('.tag')?.innerText?.trim() || '';
+          const title = course.querySelector('h2')?.innerText?.trim() || `第${i + 1}项`;
+          const isBatch = this.isBatchActivity(type, tagText);
+          const isHomework = this.isHomeworkActivity(type, tagText);
+          const statusText = course.querySelector('.statistics-box .aside')?.innerText || '';
+          const statusState = this.getCompletionState(statusText);
+          if (statusState === 'completed') continue; // 顶层已完成（含整批完成）一律跳过
+          // 关闭 AI 作答时进入纯刷视频模式：作业类项直接无视，不进入、不重载
+          if (isHomework && !isBatch && !Store.getFeatureConf().autoAI) continue;
+          const failKey = FailGate.key(this.classroomId, i, title);
+          if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
+          if (FailGate.exhausted(failKey)) {
+            skippedByLimit++;
+            this.panel.log(`⚠️ ${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`);
             continue;
           }
-          this.panel.log('课程已全部完成');
-          this.panel.resetStartButton('已完成');
-          Store.removeProgress(this.baseUrl);
+          target = { course, listNode: list[i], type, title, isBatch, isHomework, statusState, failKey, index: i };
+          break;
+        }
+
+        if (!target) {
+          // 没有可处理项：先尝试加载更多，再判定收尾
+          const loadedMore = await this.ensureCourseListLoadedPast(list.length, list.length);
+          if (loadedMore) {
+            this.panel.log('课程列表继续加载，重新扫描');
+            continue;
+          }
+          if (skippedByLimit > 0) {
+            this.panel.log(`遍历结束：仍有 ${skippedByLimit} 项达到重试上限未完成，请手动检查`);
+            this.panel.resetStartButton('开始');
+          } else {
+            this.panel.log('课程已全部完成');
+            this.panel.resetStartButton('已完成');
+          }
           Store.clearPendingAutoStart();
           break;
         }
-        const course = list[this.outside]?.querySelector('.content-box')?.querySelector('section');
-        if (!course) {
-          this.panel.log('未找到当前课程节点，跳过');
-          this.updateProgress(this.outside + 1, 0);
-          continue;
-        }
-        const type = course.querySelector('.tag')?.querySelector('use')?.getAttribute('xlink:href') || 'piliang';
-        const tagText = course.querySelector('.tag')?.innerText?.trim() || '';
-        const title = course.querySelector('h2')?.innerText?.trim() || `第${this.outside + 1}项`;
-        const isBatch = this.isBatchActivity(type, tagText);
-        const isHomework = this.isHomeworkActivity(type, tagText);
-        
-        // 预检查完成状态
-        const statusBox = course.querySelector('.statistics-box .aside');
-        const statusText = statusBox?.innerText || '';
-        
-        // 判断是否已完成
-        let isCompleted = this.checkCompletionStatus(statusText);
-        
-        if (isCompleted && !isBatch && !isHomework) {
-          this.panel.log(`✅ ${title} 已完成，跳过`);
-          this.updateProgress(this.outside + 1, 0);
-          continue;
-        }
-        
-        this.panel.log(`刷课状态：第 ${this.outside + 1}/${list.length} 个，类型 ${type}，标题：${title}`);
+
+        const { course, listNode, type, title, isBatch, isHomework, statusState, failKey } = target;
+        const stateLabel = { completed: '已完成', in_progress: '进行中', not_started: '未开始' }[statusState] || '未知';
+        this.panel.log(`处理第 ${target.index + 1}/${list.length} 项，类型 ${type}，状态 ${stateLabel}，标题：${title}`);
+        FailGate.bump(failKey); // 进入前先记一次尝试，处理后整页重载会重新扫描复查
+
         if (type.includes('shipin')) {
           await this.handleVideo(course);
         } else if (isBatch) {
-          await this.handleBatch(course, list);
+          await this.handleBatch(listNode, failKey);
         } else if (type.includes('ketang')) {
           await this.handleClassroom(course);
         } else if (type.includes('kejian')) {
           await this.handleCourseware(course);
         } else if (isHomework) {
-          await this.handleHomework(course, this.inside);
-          this.updateProgress(this.outside + 1, 0);
+          await this.handleHomework(course, failKey);
         } else if (type.includes('kaoshi')) {
           this.panel.log('考试区域脚本会被屏蔽，已跳过');
-          this.updateProgress(this.outside + 1, 0);
+          FailGate.skip(failKey); // 主动屏蔽，非失败，静默不再进入
+          continue; // 未离开目录页，直接重新扫描下一项
         } else {
           this.panel.log('非视频/批量/课件/考试，已跳过');
-          this.updateProgress(this.outside + 1, 0);
+          FailGate.skip(failKey);
+          continue;
         }
         if (this.shouldStop) return;
       }
     }
 
     async autoSlide() {
-      const frequency = Math.floor((this.outside + 1) / 20) + 1;
-      for (let i = 0; i < frequency; i++) {
+      for (let i = 0; i < 2; i++) {
         Utils.scrollToBottom('.viewContainer');
         await Utils.sleep(800);
       }
@@ -2305,81 +2343,93 @@
       stopObserve();
       if (ok) this.panel.log(`${title} 播放完成`);
       else this.panel.log(`${title} 播放完成度未达 100%`);
-      this.updateProgress(this.outside + 1, 0);
       await this.returnToList();
     }
 
-    async handleBatch(course, list) {
-      const expandBtn = course.querySelector('.sub-info')?.querySelector('.gray')?.querySelector('span');
+    async handleBatch(listNode, parentFailKey = '') {
+      const section = listNode.querySelector('.content-box')?.querySelector('section');
+      const batchTitle = section?.querySelector('h2')?.innerText?.trim() || '批量区';
+      // 展开按钮在 section 内；子项列表 .leaf_list__wrap 是列表节点的后代、在 section 之外
+      const expandBtn = section?.querySelector('.sub-info')?.querySelector('.gray')?.querySelector('span');
       if (!expandBtn) {
-        this.panel.log('未找到批量展开按钮，跳过');
-        this.updateProgress(this.outside + 1, 0);
+        this.panel.log(`批量区「${batchTitle}」未找到展开按钮，跳过`);
+        if (parentFailKey) FailGate.skip(parentFailKey);
         return;
       }
       expandBtn.click();
-      await Utils.sleep(1200);
-      const activities = list[this.outside]?.querySelector('.leaf_list__wrap')?.querySelectorAll('.activity__wrap') || [];
-      let idx = this.inside;
-      this.panel.log(`进入批量区，内部进度 ${idx}/${activities.length}`);
-      while (idx < activities.length) {
-        const item = activities[idx];
-        if (!item) break;
-        
+      // 等子项渲染：轮询 .activity__wrap 出现，最多 ~3 秒
+      await Utils.poll(
+        () => (listNode.querySelector('.leaf_list__wrap')?.querySelectorAll('.activity__wrap')?.length || 0) > 0,
+        { interval: 300, timeout: 3000 }
+      );
+      const activities = [...(listNode.querySelector('.leaf_list__wrap')?.querySelectorAll('.activity__wrap') || [])];
+      this.panel.log(`进入批量区「${batchTitle}」，共 ${activities.length} 项，定位第一个未完成子项...`);
+
+      // 只处理第一个未完成且未超限的子项，处理完整页重载后重新进入复查
+      for (let i = 0; i < activities.length; i++) {
+        const item = activities[i];
+        if (!item) continue;
         const tagText = item.querySelector('.tag')?.innerText || '';
         const tagHref = item.querySelector('.tag')?.querySelector('use')?.getAttribute('xlink:href') || '';
-        const title = item.querySelector('h2')?.innerText || `第${idx + 1}项`;
+        const title = item.querySelector('h2')?.innerText?.trim() || `第${i + 1}项`;
         const isHomework = this.isHomeworkActivity(tagHref, tagText);
-        
-        // 检查当前项目的完成状态
-        const statusBox = item.querySelector('.statistics-box .aside');
-        const statusText = statusBox?.innerText || '';
-        const isCompleted = this.checkCompletionStatus(statusText);
-        
-        if (isCompleted && !isHomework) {
-          this.panel.log(`✅ ${title} 已完成，跳过`);
-          idx++;
-          this.updateProgress(this.outside, idx);
+        const statusText = item.querySelector('.statistics-box .aside')?.innerText || '';
+        const statusState = this.getCompletionState(statusText);
+        if (statusState === 'completed') continue;
+        // 关闭 AI 作答时纯刷视频：作业子项直接无视，不进入、不重载
+        if (isHomework && !Store.getFeatureConf().autoAI) continue;
+
+        const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
+        if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
+        if (FailGate.exhausted(subKey)) {
+          this.panel.log(`⚠️ ${title} 尝试 ${FailGate.maxAttempts} 次仍未完成，跳过`);
           continue;
         }
-        
+
+        const stateLabel = { completed: '已完成', in_progress: '进行中', not_started: '未开始' }[statusState] || '未知';
+        this.panel.log(`处理批量子项 ${i + 1}/${activities.length}：${title}（状态 ${stateLabel}）`);
+        FailGate.bump(subKey);
+        // 子项有实际进展：重置批量顶层计数，避免多子项的正常推进误触发顶层重试上限
+        if (parentFailKey) FailGate.reset(parentFailKey);
+
         if (tagText === '音频') {
-          idx = await this.playAudioItem(item, title, idx);
+          await this.playAudioItem(item, title);
         } else if (tagHref.includes('shipin')) {
-          idx = await this.playVideoItem(item, title, idx);
+          await this.playVideoItem(item, title);
         } else if (tagHref.includes('tuwen') || tagHref.includes('taolun')) {
-          idx = await this.autoCommentItem(item, tagHref.includes('tuwen') ? '图文' : '讨论', idx);
+          await this.autoCommentItem(item, tagHref.includes('tuwen') ? '图文' : '讨论');
         } else if (isHomework) {
-          idx = await this.handleHomework(item, idx);
+          await this.handleHomework(item, subKey);
         } else {
           this.panel.log(`类型未知，已跳过：${title}`);
-          idx++;
-          this.updateProgress(this.outside, idx);
+          FailGate.skip(subKey); // 主动跳过，静默，不重载，继续看同批后续子项
+          continue;
         }
-        if (this.shouldStop) return;
+        return; // 已推进一项，交回 run() 由重载后重新扫描
       }
-      this.updateProgress(this.outside + 1, 0);
-      await Utils.sleep(1000);
+
+      // 没有可处理子项：子项或已全部完成、或全部已跳过/超限。
+      // 标记批量顶层已跳过，避免 run() 再为这个推不动的批量浪费整页重载。
+      if (parentFailKey) FailGate.skip(parentFailKey);
+      this.panel.log(`批量区「${batchTitle}」无可处理子项，继续扫描下一项`);
     }
 
-    async playAudioItem(item, title, idx) {
+    async playAudioItem(item, title) {
       this.panel.log(`开始播放音频：${title}`);
       item.click();
-      if (await this.waitForExternalHandoff()) return idx;
+      if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
       Player.applyMediaDefault(document.querySelector('audio'));
       const progressNode = document.querySelector('.progress-wrap')?.querySelector('.text');
       await Utils.poll(() => Utils.isProgressDone(progressNode?.innerHTML), { interval: 3000, timeout: await Utils.getDDL() });
       this.panel.log(`${title} 播放完成`);
-      idx++;
-      this.updateProgress(this.outside, idx);
       await this.returnToList();
-      return idx;
     }
 
-    async playVideoItem(item, title, idx) {
+    async playVideoItem(item, title) {
       this.panel.log(`开始播放视频：${title}`);
       item.click();
-      if (await this.waitForExternalHandoff()) return idx;
+      if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
       Player.applySpeed();
       Player.mute();
@@ -2392,25 +2442,20 @@
       stopObserve();
       if (ok) this.panel.log(`${title} 播放完成`);
       else this.panel.log(`${title} 播放完成度未达 100%`);
-      idx++;
-      this.updateProgress(this.outside, idx);
       await this.returnToList();
-      return idx;
     }
 
-    async autoCommentItem(item, typeText, idx) {
+    async autoCommentItem(item, typeText) {
       this.panel.log(`开始处理${typeText}：${item.querySelector('h2')?.innerText || ''}`);
       item.click();
       await Utils.sleep(1200);
-      
+
       // 检查是否开启自动评论功能
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoComment) {
         this.panel.log(`${typeText}已查看，但未开启自动回复功能`);
-        idx++;
-        this.updateProgress(this.outside, idx);
         await this.returnToList();
-        return idx;
+        return;
       }
        
       // 开启了自动评论功能，执行评论逻辑
@@ -2454,19 +2499,15 @@
           this.panel.log('未找到评论输入框，跳过');
         }
       }
-      idx++;
-      this.updateProgress(this.outside, idx);
       await this.returnToList();
-      return idx;
     }
 
-    async handleHomework(item, idx) {
+    async handleHomework(item, failKey = '') {
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoAI) {
         this.panel.log('已关闭AI自动答题，跳过该项');
-        idx++;
-        this.updateProgress(this.outside, idx);
-        return idx;
+        if (failKey) FailGate.skip(failKey); // 防御性：正常路径已在扫描阶段跳过作业，不会进到这里
+        return;
       }
       this.panel.log('进入作业，启动截图 + 多模态 AI');
       item.click();
@@ -2554,10 +2595,7 @@
         this.panel.log('未找到整体交卷按钮，可能已经自动保存');
       }
 
-      idx++;
-      this.updateProgress(this.outside, idx);
       await this.returnToList();
-      return idx;
     }
 
     async handleClassroom(course) {
@@ -2567,7 +2605,7 @@
       const iframe = document.querySelector('iframe.lesson-report-mobile');
       if (!iframe || !iframe.contentDocument) {
         this.panel.log('未找到课堂 iframe，跳过');
-        this.updateProgress(this.outside + 1, 0);
+        await this.returnToList();
         return;
       }
       const video = iframe.contentDocument.querySelector('video');
@@ -2584,7 +2622,6 @@
         Player.applyMediaDefault(audio);
         await Player.waitForEnd(audio);
       }
-      this.updateProgress(this.outside + 1, 0);
       await this.returnToList();
     }
 
@@ -2593,7 +2630,7 @@
       const deadlinePassed = (tableData?.deadline || tableData?.end) ? (tableData.deadline < Date.now() || tableData.end < Date.now()) : false;
       if (deadlinePassed) {
         this.panel.log(`${course.querySelector('h2')?.innerText || '课件'} 已结课，跳过`);
-        this.updateProgress(this.outside + 1, 0);
+        await this.returnToList();
         return;
       }
       course.click();
@@ -2632,7 +2669,6 @@
           this.panel.log(`${className} 视频播放完毕`);
         }
       }
-      this.updateProgress(this.outside + 1, 0);
       await this.returnToList();
     }
 
