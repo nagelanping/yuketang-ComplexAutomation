@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.5.0
+// @version      0.7.1
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -46,9 +46,38 @@
     }
   };
 
+  // 暂停闸门：所有 Runner 主循环都经由 Utils.sleep 推进，
+  // 暂停时让 sleep 在计时结束后继续挂起，直到恢复，从而统一暂停整条自动化流程。
+  const PauseGate = {
+    paused: false,
+    _waiters: [],
+    onChange: null,
+    pause() {
+      if (this.paused) return;
+      this.paused = true;
+      this.onChange && this.onChange(true);
+    },
+    resume() {
+      if (!this.paused) return;
+      this.paused = false;
+      const waiters = this._waiters;
+      this._waiters = [];
+      waiters.forEach(fn => fn());
+      this.onChange && this.onChange(false);
+    },
+    toggle() {
+      this.paused ? this.resume() : this.pause();
+      return this.paused;
+    },
+    wait() {
+      if (!this.paused) return Promise.resolve();
+      return new Promise(resolve => this._waiters.push(resolve));
+    }
+  };
+
   const Utils = {
-    // 短暂睡眠，等待网页加载
-    sleep: (ms = 1000) => new Promise(resolve => setTimeout(resolve, ms)),
+    // 短暂睡眠，等待网页加载；若处于暂停状态则在计时结束后继续挂起，直到恢复
+    sleep: (ms = 1000) => new Promise(resolve => setTimeout(resolve, ms)).then(() => PauseGate.wait()),
     // 将一个 JSON 字符串解析为 JavaScript 对象
     safeJSONParse(value, fallback) {
       try {
@@ -249,16 +278,16 @@
   function createPanel() {
     const iframe = document.createElement('iframe');
     iframe.style.position = 'fixed';
-    iframe.style.top = '40px';
-    iframe.style.left = '40px';
-    iframe.style.width = '520px';
-    iframe.style.height = '460px';
+    iframe.style.top = '48px';
+    iframe.style.left = '48px';
+    iframe.style.width = '380px';
+    iframe.style.height = '500px';
     iframe.style.zIndex = '999999';
-    iframe.style.border = '1px solid #a3a3a3';
-    iframe.style.borderRadius = '10px';
-    iframe.style.background = '#fff';
+    iframe.style.border = 'none';
+    iframe.style.borderRadius = '16px';
+    iframe.style.background = 'transparent';
     iframe.style.overflow = 'hidden';
-    iframe.style.boxShadow = '6px 4px 17px 2px #000000';
+    iframe.style.boxShadow = '0 16px 48px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.08)';
     iframe.setAttribute('frameborder', '0');
     iframe.setAttribute('id', 'ykt-helper-iframe');
     iframe.setAttribute('allowtransparency', 'true');
@@ -271,305 +300,391 @@
     const doc = iframe.contentDocument || iframe.contentWindow.document;
     doc.open();
     doc.write(`
-                  <style>
-              /* 全局重置 */
-              html, body { overflow: hidden; margin: 0; padding: 0; font-family: "Segoe UI", "PingFang SC", Avenir, Helvetica, Arial, sans-serif; color: #4a4a4a; background: transparent; }
+            <style>
+              :root {
+                --bg: #ffffff;
+                --bg-elevated: #fbfbfd;
+                --text: #1d1d1f;
+                --text-secondary: #6e6e73;
+                --text-tertiary: #8e8e93;
+                --hairline: rgba(0, 0, 0, 0.08);
+                --hairline-strong: rgba(0, 0, 0, 0.12);
+                --accent: #0071e3;
+                --accent-hover: #0077ed;
+                --danger: #ff3b30;
+                --fill: #f5f5f7;
+                --fill-hover: #ececef;
+                --radius: 16px;
+                --radius-sm: 10px;
+                --radius-control: 8px;
+              }
 
-              /* 主容器 */
+              * { box-sizing: border-box; }
+
+              html, body {
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+                font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+                font-size: 13px;
+                color: var(--text);
+                background: transparent;
+                -webkit-font-smoothing: antialiased;
+              }
+
+              /* 收起后的胶囊 */
               .mini-basic {
                 position: absolute;
                 inset: 0;
-                background: #3a7afe;
-                color: white;
-                height: 100%;
-                width: 100%;
-                min-height: 42px;
-                min-width: 42px;
-                border-radius: 10px;
-                text-align: center;
-                line-height: 1;
-                z-index: 1000000;
-                cursor: pointer;
                 display: none;
                 align-items: center;
                 justify-content: center;
-                font-weight: bold;
-                box-shadow: 0 4px 12px rgba(0,0,0,0);
+                border-radius: var(--radius);
+                background: var(--accent);
+                color: #fff;
+                font-size: 13px;
+                font-weight: 500;
+                letter-spacing: 0.2px;
+                cursor: pointer;
+                z-index: 1000000;
+                transition: background 0.2s ease;
               }
-              .mini-basic.show {
-                display: flex;
-              }
+              .mini-basic.show { display: flex; }
+              .mini-basic:hover { background: var(--accent-hover); }
 
-              /* 面板主容器 */
+              /* 主面板 */
               .panel {
                 width: 100%;
                 height: 100%;
-                background: white;
-                border-radius: 10px;
                 position: relative;
                 overflow: hidden;
+                background: var(--bg);
+                border-radius: var(--radius);
+                display: flex;
+                flex-direction: column;
               }
 
               /* 标题栏 */
               .header {
-                text-align: center;
-                height: 40px;
-                background: #f7f7f7;
-                color: #000;
-                font-size: 18px;
-                line-height: 40px;
-                border-radius: 10px 10px 0 0;
-                border-bottom: 2px solid #eee;
-                cursor: move;
-                position: relative;
+                flex: 0 0 auto;
+                height: 52px;
+                padding: 0 16px;
                 display: flex;
                 align-items: center;
                 justify-content: space-between;
-                padding: 0 10px;
+                background: var(--bg-elevated);
+                border-bottom: 1px solid var(--hairline);
+                cursor: move;
+                user-select: none;
+              }
+              .header .title {
+                font-size: 15px;
+                font-weight: 600;
+                letter-spacing: -0.2px;
+                color: var(--text);
+              }
+              .header .title small {
+                display: block;
+                font-size: 11px;
+                font-weight: 400;
+                color: var(--text-tertiary);
+                letter-spacing: 0;
+                margin-top: 1px;
               }
               .tools ul {
                 margin: 0;
                 padding: 0;
                 list-style: none;
                 display: flex;
-                gap: 5px;
+                gap: 8px;
               }
               .tools li {
-                display: inline-block;
-                cursor: pointer;
+                width: 26px;
+                height: 26px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                background: var(--fill);
+                color: var(--text-secondary);
                 font-size: 14px;
-                padding: 0 5px;
+                line-height: 1;
+                cursor: pointer;
+                transition: background 0.15s ease, color 0.15s ease;
               }
+              .tools li:hover { background: var(--fill-hover); color: var(--text); }
 
-              /* 内容区 */
+              /* 内容 / 日志区 */
               .body {
-                font-weight: normal;
-                font-size: 13px;
-                line-height: 22px;
-                height: calc(100% - 85px);
+                flex: 1 1 auto;
                 overflow-y: auto;
-                padding: 6px 8px;
-                box-sizing: border-box;
+                padding: 14px 16px;
+                line-height: 1.5;
               }
-
-              .info {
-                margin: 0;
-                padding: 0;
-                list-style: none;
+              .body::-webkit-scrollbar { width: 8px; }
+              .body::-webkit-scrollbar-thumb {
+                background: rgba(0, 0, 0, 0.18);
+                border-radius: 4px;
+                border: 2px solid transparent;
+                background-clip: padding-box;
               }
+              .info { margin: 0; padding: 0; list-style: none; }
               .info li {
-                margin-bottom: 4px;
-                color: #333;
+                margin-bottom: 7px;
+                color: var(--text-secondary);
+                font-size: 12.5px;
+              }
+              .info li strong { color: var(--text); font-weight: 600; }
+              .info li .tag {
+                color: var(--accent);
+                font-weight: 500;
+              }
+              .info hr {
+                border: none;
+                border-top: 1px solid var(--hairline);
+                margin: 12px 0 4px;
               }
 
-              /* 设置面板 */
+              /* 设置页 */
               #settings {
                 display: none;
                 position: absolute;
-                top: 40px;
+                top: 52px;
                 left: 0;
-                width: 100%;
-                height: calc(100% - 40px);
-                background: white;
+                right: 0;
+                bottom: 0;
+                background: var(--bg);
                 z-index: 99;
-                padding: 15px;
-                box-sizing: border-box;
+                padding: 16px;
                 overflow-y: auto;
               }
-
-              /* 表单项 */
-              .form-item {
-                margin-bottom: 15px;
+              #settings::-webkit-scrollbar { width: 8px; }
+              #settings::-webkit-scrollbar-thumb {
+                background: rgba(0, 0, 0, 0.18);
+                border-radius: 4px;
+                border: 2px solid transparent;
+                background-clip: padding-box;
               }
-              .form-item label {
+
+              .form-item { margin-bottom: 14px; }
+              .form-item > label {
                 display: block;
-                margin-bottom: 5px;
+                margin-bottom: 6px;
                 font-size: 12px;
-                color: #333;
+                font-weight: 500;
+                color: var(--text-secondary);
               }
               .form-item input[type="text"],
-              .form-item input[type="password"] {
+              .form-item input[type="password"],
+              .form-item select {
                 width: 100%;
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                font-size: 12px;
-                box-sizing: border-box;
+                padding: 9px 11px;
+                border: 1px solid var(--hairline-strong);
+                border-radius: var(--radius-control);
+                background: var(--bg);
+                color: var(--text);
+                font-size: 13px;
+                font-family: inherit;
+                outline: none;
+                transition: border-color 0.15s ease, box-shadow 0.15s ease;
+              }
+              .form-item input::placeholder { color: var(--text-tertiary); }
+              .form-item input:focus,
+              .form-item select:focus {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.15);
               }
 
-              /* 复选框标签优化：避免“启用”跑到右边 */
+              /* 开关式复选项 */
               .form-item .checkbox-label {
                 display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 12px;
+                align-items: flex-start;
+                gap: 10px;
+                font-size: 12.5px;
+                color: var(--text);
                 cursor: pointer;
+                line-height: 1.45;
               }
               .form-item .checkbox-label input[type="checkbox"] {
+                flex: 0 0 auto;
+                appearance: none;
+                -webkit-appearance: none;
+                width: 38px;
+                height: 22px;
                 margin: 0;
-                width: auto;
+                border-radius: 11px;
+                background: #d1d1d6;
+                position: relative;
+                cursor: pointer;
+                transition: background 0.2s ease;
               }
-
-              /* 底部按钮栏 */
-              .footer {
+              .form-item .checkbox-label input[type="checkbox"]::after {
+                content: "";
                 position: absolute;
-                bottom: 0;
-                left: 0;
-                width: 100%;
-                background: #f7f7f7;
-                color: #c5c5c5;
-                font-size: 13px;
-                line-height: 25px;
-                border-radius: 0 0 10px 10px;
-                border-bottom: 2px solid #eee;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                padding: 6px 0;
-                gap: 10px;
+                top: 2px;
+                left: 2px;
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+                transition: transform 0.2s ease;
               }
-              .footer button {
-                border: none;
-                border-radius: 6px;
-                color: white;
-                cursor: pointer;
-                padding: 6px 12px;
-                font-size: 12px;
-                transition: all 0.2s ease;
-              }
-              #btn-start {
-                background-color: #1677ff;
-              }
-              #btn-start:hover {
-                background-color: #f6ff00;
-                color: black;
-              }
-              #btn-clear {
-                background-color: #ff4d4f;
-              }
-              #btn-setting {
-                background-color: #52c41a;
-              }
+              .form-item .checkbox-label input[type="checkbox"]:checked { background: #34c759; }
+              .form-item .checkbox-label input[type="checkbox"]:checked::after { transform: translateX(16px); }
 
-              /* 设置页底部按钮 */
-              .settings-footer {
-                text-align: center;
-                margin-top: 12px;
-                display: flex;
-                justify-content: center;
-                gap: 10px;
+              .settings-section {
+                margin: 18px 0 10px;
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.4px;
+                text-transform: uppercase;
+                color: var(--text-tertiary);
               }
-              .settings-footer button {
-                padding: 6px 15px;
-                font-size: 12px;
-                border-radius: 6px;
+              .settings-section:first-child { margin-top: 0; }
+
+              /* 通用按钮 */
+              button {
+                font-family: inherit;
                 border: none;
                 cursor: pointer;
+                font-size: 13px;
+                font-weight: 500;
+                border-radius: var(--radius-control);
+                transition: background 0.15s ease, opacity 0.15s ease;
               }
-              #save_settings {
-                background-color: #1677ff;
-                color: white;
+              button:active { opacity: 0.85; }
+
+              .btn-primary { background: var(--accent); color: #fff; }
+              .btn-primary:hover { background: var(--accent-hover); }
+              .btn-secondary { background: var(--fill); color: var(--text); }
+              .btn-secondary:hover { background: var(--fill-hover); }
+              .btn-danger { background: var(--fill); color: var(--danger); }
+              .btn-danger:hover { background: rgba(255, 59, 48, 0.1); }
+
+              .settings-footer {
+                display: flex;
+                gap: 10px;
+                margin-top: 20px;
               }
-              #close_settings {
-                background-color: #999;
-                color: white;
+              .settings-footer button { flex: 1; padding: 10px; }
+
+              /* 底部操作栏 */
+              .footer {
+                flex: 0 0 auto;
+                display: flex;
+                gap: 8px;
+                padding: 12px 16px;
+                background: var(--bg-elevated);
+                border-top: 1px solid var(--hairline);
               }
+              .footer button { padding: 10px 14px; }
+              #btn-setting { flex: 0 0 auto; }
+              #btn-clear { flex: 0 0 auto; }
+              #btn-pause { flex: 0 0 auto; }
+              #btn-start { flex: 1 1 auto; }
             </style>
 
             <div class="mini-basic" id="mini-basic">展开</div>
             <div class="panel" id="panel">
               <div class="header" id="header">
-                yuketang-ComplexAutomation
+                <span class="title">雨课堂助手<small>Complex Automation</small></span>
                 <div class='tools'>
                   <ul>
-                    <li class='minimality' id="minimality">_</li>
-                    <li class='question' id="question">?</li>
+                    <li class='minimality' id="minimality" title="收起">&#8211;</li>
                   </ul>
                 </div>
               </div>
               <div class="body">
                 <ul class="info" id="info">
-                  <li>⭐ 脚本支持：雨课堂所有版本</li>
-                  <li>🤖 <strong>作业答题：</strong>截图题面后提交给 OpenAI-compatible 多模态模型，不再使用 OCR</li>
-                  <li>📢 <strong>使用必读：</strong>自动答题需先点击<span style="color:green">[AI配置]</span>开启并填入API Key</li>
-                  <li>🚀 配置完成后，点击<span style="color:blue">[开始刷课]</span>即可启动视频与作业挂机</li>
-                  <li>🤝 脚本还有很多不足，欢迎各位一起完善代码</li>
+                  <li>兼容雨课堂各版本课程页面，自动处理视频、音频与作业。</li>
+                  <li><strong>智能答题</strong>截取题面后交由多模态模型作答，无需 OCR。</li>
+                  <li><strong>开始之前</strong>先在 <span class="tag">模型设置</span> 中填入 API Key 并启用自动作答。</li>
+                  <li>配置完成后点击 <span class="tag">开始</span>，即可挂机处理视频与作业。</li>
                   <hr>
+                  <li>运行日志将显示在此处。</li>
                 </ul>
               </div>
               <div id="settings">
+                <div class="settings-section">模型接入</div>
                 <div class="form-item">
-                  <label>API URL:</label>
-                  <input type="text" id="ai_url" placeholder="https://api.openai.com/v1/chat/completions 或 /responses">
+                  <label>接口地址</label>
+                  <input type="text" id="ai_url" placeholder="https://api.openai.com/v1/chat/completions">
                 </div>
                 <div class="form-item">
-                  <label>API KEY:</label>
-                  <input type="password" id="ai_key" placeholder="sk-xxxxxxxx">
+                  <label>API Key</label>
+                  <input type="password" id="ai_key" placeholder="sk-••••••••">
                 </div>
                 <div class="form-item">
-                  <label>Model Name:</label>
-                  <input type="text" id="ai_model" placeholder="gpt-4o-mini / qwen-vl-plus / mimo-v2-flash">
+                  <label>模型名称</label>
+                  <input type="text" id="ai_model" placeholder="gpt-4o-mini / qwen-vl-plus">
                 </div>
                 <div class="form-item">
-                  <label>API Format:</label>
-                  <select id="ai_format" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:12px;">
-                    <option value="auto">Auto by URL</option>
-                    <option value="openai-chat">OpenAI-compatible Chat Completions</option>
-                    <option value="openai-responses">OpenAI-compatible Responses</option>
+                  <label>接口格式</label>
+                  <select id="ai_format">
+                    <option value="auto">自动识别（按地址）</option>
+                    <option value="openai-chat">OpenAI Chat Completions</option>
+                    <option value="openai-responses">OpenAI Responses</option>
                   </select>
                 </div>
                 <div class="form-item">
-                  <label>Auth Method:</label>
-                  <select id="auth_method" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:12px;">
-                    <option value="auto">Auto by API/Model</option>
-                    <option value="bearer">Bearer Token (Authorization: Bearer)</option>
-                    <option value="x-api-key">X-API-Key Header</option>
-                    <option value="api-key">API-Key Header</option>
+                  <label>鉴权方式</label>
+                  <select id="auth_method">
+                    <option value="auto">自动识别</option>
+                    <option value="bearer">Bearer Token</option>
+                    <option value="x-api-key">X-API-Key</option>
+                    <option value="api-key">API-Key</option>
                   </select>
                 </div>
                 <div class="form-item">
-                  <label>Max Tokens:</label>
-                  <input type="text" id="ai_max_tokens" placeholder="留空/0=自动：CoT 32768，非 CoT 4096">
+                  <label>最大 Token</label>
+                  <input type="text" id="ai_max_tokens" placeholder="留空为自动：CoT 32768，否则 4096">
                 </div>
+
+                <div class="settings-section">推理选项</div>
                 <div class="form-item">
                   <label class="checkbox-label">
                     <input type="checkbox" id="ai_thinking">
-                    启用 thinking / CoT（默认开启）
+                    <span>启用思维链（CoT），默认开启</span>
                   </label>
                 </div>
                 <div class="form-item">
                   <label class="checkbox-label">
                     <input type="checkbox" id="ai_stream">
-                    使用流式传输（默认开启，60秒无响应判定超时）
+                    <span>流式传输，默认开启，60 秒无响应判定超时</span>
                   </label>
                 </div>
+
+                <div class="settings-section">自动化功能</div>
                 <div class="form-item">
                   <label class="checkbox-label">
                     <input type="checkbox" id="feature_auto_ai">
-                    用 AI 自动作答（作业/题目）
+                    <span>自动作答作业与题目</span>
                   </label>
                 </div>
                 <div class="form-item">
                   <label class="checkbox-label">
                     <input type="checkbox" id="feature_auto_comment">
-                    用批量区图文/讨论自动回复
+                    <span>自动回复图文与讨论区</span>
                   </label>
                 </div>
                 <div class="form-item">
                   <label class="checkbox-label">
                     <input type="checkbox" id="feature_font_patch">
-                    实验：禁用雨课堂混淆字体（截图答题通常不需要）
+                    <span>禁用雨课堂混淆字体（实验，截图答题通常无需开启）</span>
                   </label>
                 </div>
+
                 <div class="settings-footer">
-                  <button id="save_settings">保存并关闭</button>
-                  <button id="close_settings">取消</button>
+                  <button id="close_settings" class="btn-secondary">取消</button>
+                  <button id="save_settings" class="btn-primary">保存</button>
                 </div>
               </div>
               <div class="footer">
-                <button id="btn-setting">AI配置</button>
-                <button id="btn-clear">清除缓存</button>
-                <button id="btn-start">开始刷课</button>
+                <button id="btn-setting" class="btn-secondary">模型设置</button>
+                <button id="btn-clear" class="btn-danger">清除进度</button>
+                <button id="btn-pause" class="btn-secondary" style="display:none;">暂停</button>
+                <button id="btn-start" class="btn-primary">开始</button>
               </div>
             </div>
     `);
@@ -582,6 +697,7 @@
       header: doc.getElementById('header'),
       info: doc.getElementById('info'),
       btnStart: doc.getElementById('btn-start'),
+      btnPause: doc.getElementById('btn-pause'),
       btnClear: doc.getElementById('btn-clear'),
       btnSetting: doc.getElementById('btn-setting'),
       settings: doc.getElementById('settings'),
@@ -599,7 +715,6 @@
       featureAutoComment: doc.getElementById('feature_auto_comment'),
       featureFontPatch: doc.getElementById('feature_font_patch'),
       minimality: doc.getElementById('minimality'),
-      question: doc.getElementById('question'),
       miniBasic: doc.getElementById('mini-basic')
     };
 
@@ -659,10 +774,6 @@
     ui.minimality.addEventListener('click', enterMini);
     ui.miniBasic.addEventListener('click', exitMini);
 
-    ui.question.addEventListener('click', () => {
-      window.parent.alert('yuketang-ComplexAutomation\\n基于 GPL-3.0 开源脚本综合改造');
-    });
-
     const log = message => {
       const li = doc.createElement('li');
       li.innerText = message;
@@ -718,22 +829,33 @@
       Store.setFeatureConf(featureConf);
       FontPatch.apply(featureConf.fontPatch);
       ui.settings.style.display = 'none';
-      log('✅ AI 配置已保存');
+      log('模型配置已保存');
     };
 
     ui.btnClear.onclick = () => {
       Store.removeProgress(window.parent.location.href);
       localStorage.removeItem(Config.storageKeys.proClassCount);
       Store.clearPendingAutoStart();
-      log('已清除当前课程的刷课进度缓存');
+      log('已清除当前课程的刷课进度');
     };
 
     let startHandler = null;
     const invokeStart = () => {
-      log('启动中...');
-      ui.btnStart.innerText = '刷课中...';
+      // 若处于暂停态先恢复，避免“开始”后流程仍被闸门挂起
+      if (PauseGate.paused) PauseGate.resume();
+      log('正在启动…');
+      ui.btnStart.innerText = '运行中';
+      ui.btnPause.style.display = '';
+      ui.btnPause.innerText = '暂停';
       startHandler && startHandler();
     };
+
+    PauseGate.onChange = paused => {
+      ui.btnPause.innerText = paused ? '继续' : '暂停';
+      ui.btnPause.className = paused ? 'btn-primary' : 'btn-secondary';
+      log(paused ? '已暂停，当前步骤完成后挂起' : '已继续');
+    };
+    ui.btnPause.onclick = () => PauseGate.toggle();
 
     // 后面赋值给panel
     return {
@@ -746,8 +868,11 @@
       start() {
         invokeStart();
       },
-      resetStartButton(text = '开始刷课') {
+      resetStartButton(text = '开始') {
         ui.btnStart.innerText = text;
+        // 流程结束（完成/出错/非目标页）时收起暂停按钮并复位闸门
+        if (PauseGate.paused) PauseGate.resume();
+        ui.btnPause.style.display = 'none';
       }
     };
   }
@@ -2158,8 +2283,8 @@
             this.panel.log('课程列表尚未加载完整，继续扫描后续章节');
             continue;
           }
-          this.panel.log('课程刷完啦 🎉');
-          this.panel.resetStartButton('刷完啦~');
+          this.panel.log('课程已全部完成');
+          this.panel.resetStartButton('已完成');
           Store.removeProgress(this.baseUrl);
           Store.clearPendingAutoStart();
           break;
@@ -3198,8 +3323,8 @@
     if (matchURL.includes('yuketang.cn/v2/web') || matchURL.includes('gdufemooc.cn/v2/web')) {
       // v2 路线必须在课程列表页运行，避免在单个课件/视频页误启动主循环
       if (!document.querySelector('.logs-list')) {
-        panel.resetStartButton('开始刷课');
-        panel.log('当前页面不是课程列表（缺少 .logs-list），请返回课程目录页后再开始刷课');
+        panel.resetStartButton('开始');
+        panel.log('当前页面不是课程列表（缺少 .logs-list），请返回课程目录页后再开始');
         return;
       }
       new V2Runner(panel).run();
@@ -3210,8 +3335,8 @@
         new ProOldRunner(panel).run();
       }
     } else {
-      panel.resetStartButton('开始刷课');
-      panel.log('当前页面非刷课页面，应匹配 */v2/web/*、*/pro/lms/* 或 */ai-workspace/lms-graph/*');
+      panel.resetStartButton('开始');
+      panel.log('当前页面非支持页面，应匹配 */v2/web/*、*/pro/lms/* 或 */ai-workspace/lms-graph/*');
     }
   }
 
