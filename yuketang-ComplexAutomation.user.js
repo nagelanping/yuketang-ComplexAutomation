@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.7.1
+// @version      0.7.2
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -1107,81 +1107,6 @@
         }
       });
     },
-    async waitForFullPlayback(media, progressNode, options = {}) {
-      if (!media) return false;
-      const { title = '视频', onLog } = options;
-      const maxReplayAttempts = 3;
-      let attempts = 0;
-
-      while (attempts < maxReplayAttempts) {
-        attempts++;
-        if (attempts > 1 && onLog) {
-          onLog(`${title} 进度未满，第 ${attempts} 次从头重播...`);
-        }
-
-        await this.playFromStart(media);
-        const started = await this.startPlayback(media);
-        if (!started) {
-          console.warn(`${title} 未能开始播放`);
-          await Utils.sleep(2000);
-          continue;
-        }
-
-        this.applySpeed();
-        this.mute();
-        const stopObserve = this.observePause(media);
-
-        let ended = false;
-        let lastTime = -1;
-        let stuckCount = 0;
-        const startWait = Date.now();
-        const duration = Number(media.duration || 0);
-        const maxWait = Math.max(duration * 4000, 120000);
-
-        while (!ended && Date.now() - startWait < maxWait) {
-          await Utils.sleep(1000);
-
-          if (Utils.isProgressDone(progressNode?.innerHTML)) {
-            ended = true;
-            break;
-          }
-
-          if (media.ended || this.isNearEnd(media)) {
-            await Utils.sleep(3000);
-            if (Utils.isProgressDone(progressNode?.innerHTML) || media.ended || this.isNearEnd(media)) {
-              ended = true;
-              break;
-            }
-          }
-
-          if (Math.abs(media.currentTime - lastTime) < 0.05 && !media.paused) {
-            stuckCount++;
-            if (stuckCount > 15) {
-              if (onLog) onLog(`${title} 播放卡住，尝试恢复`);
-              await this.startPlayback(media);
-              stuckCount = 0;
-            }
-          } else {
-            stuckCount = 0;
-            lastTime = media.currentTime;
-          }
-
-          if (media.paused && !media.ended && !this.isNearEnd(media)) {
-            await this.startPlayback(media);
-          }
-        }
-
-        stopObserve();
-
-        if (Utils.isProgressDone(progressNode?.innerHTML)) {
-          return true;
-        }
-
-        await Utils.sleep(1000);
-      }
-
-      return false;
-    }
   };
 
   // ---- ai-workspace 路由工具 ----
@@ -2370,13 +2295,16 @@
       const title = document.querySelector('.title')?.innerText || '视频';
       const isDeadline = document.querySelector('.box')?.innerText.includes('已过考核截止时间');
       if (isDeadline) this.panel.log(`${title} 已过截止，进度不再增加，将直接跳过`);
-      const video = document.querySelector('video');
-      const ok = await Player.waitForFullPlayback(video, progressNode, {
-        title,
-        onLog: msg => this.panel.log(msg)
-      });
-      if (!ok) this.panel.log(`${title} 播放完成度未达 100%，已尝试多次`);
-      else this.panel.log(`${title} 播放完成`);
+      Player.applySpeed();
+      Player.mute();
+      const stopObserve = Player.observePause(document.querySelector('video'));
+      const ok = await Utils.poll(
+        () => isDeadline || Utils.isProgressDone(progressNode?.innerHTML),
+        { interval: 5000, timeout: await Utils.getDDL() }
+      );
+      stopObserve();
+      if (ok) this.panel.log(`${title} 播放完成`);
+      else this.panel.log(`${title} 播放完成度未达 100%`);
       this.updateProgress(this.outside + 1, 0);
       await this.returnToList();
     }
@@ -2453,14 +2381,17 @@
       item.click();
       if (await this.waitForExternalHandoff()) return idx;
       await Utils.sleep(2500);
-      const video = document.querySelector('video');
+      Player.applySpeed();
+      Player.mute();
+      const stopObserve = Player.observePause(document.querySelector('video'));
       const progressNode = document.querySelector('.progress-wrap')?.querySelector('.text');
-      const ok = await Player.waitForFullPlayback(video, progressNode, {
-        title,
-        onLog: msg => this.panel.log(msg)
-      });
-      if (!ok) this.panel.log(`${title} 播放完成度未达 100%，已尝试多次`);
-      else this.panel.log(`${title} 播放完成`);
+      const ok = await Utils.poll(
+        () => Utils.isProgressDone(progressNode?.innerHTML),
+        { interval: 3000, timeout: await Utils.getDDL() }
+      );
+      stopObserve();
+      if (ok) this.panel.log(`${title} 播放完成`);
+      else this.panel.log(`${title} 播放完成度未达 100%`);
       idx++;
       this.updateProgress(this.outside, idx);
       await this.returnToList();
