@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.1
+// @version      0.9.2
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -1157,13 +1157,28 @@
       if (match) {
         const [, classroomId, type, leafId] = match;
         const query = new URLSearchParams(location.search);
-        return { classroomId, type, leafId, nodeId: query.get('node_id') || '' };
+        return { classroomId, type, leafId, nodeId: query.get('node_id') || '', source: 'ai-workspace/lms-graph' };
       }
       // v2/web/cloud 路由，例如 /v2/web/cloud/student/exercise/{classroomId}/{nodeId}/{leafId}
       const cloudMatch = location.pathname.match(/^\/v2\/web\/cloud\/student\/([^/]+)\/([^/]+)\/([^/]+)\/([^/?#]+)/);
       if (cloudMatch) {
         const [, type, classroomId, nodeId, leafId] = cloudMatch;
-        return { classroomId, type, leafId, nodeId: nodeId || '' };
+        return { classroomId, type, leafId, nodeId: nodeId || '', source: 'v2/web/cloud' };
+      }
+      // v2/web/xcloud 路由，例如 /v2/web/xcloud/video-student/{id}/{leafId}
+      const xcloudMatch = location.pathname.match(/^\/v2\/web\/xcloud\/([^/]+)\/([^/]+)(?:\/([^/?#]+))?/);
+      if (xcloudMatch) {
+        const [, rawType, firstId = '', secondId = ''] = xcloudMatch;
+        const query = new URLSearchParams(location.search);
+        const classroomId = query.get('classroom_id') || query.get('classroomId') || '';
+        const type = String(rawType || '').replace(/-student$/i, '');
+        return {
+          classroomId,
+          type,
+          leafId: secondId || firstId,
+          nodeId: query.get('node_id') || firstId || '',
+          source: 'v2/web/xcloud'
+        };
       }
       return null;
     },
@@ -3003,7 +3018,7 @@
       const pending = Store.getPendingAutoStart();
       const route = AiWorkspace.getRoute();
       if (!pending || !route) return '';
-      if (pending.classroomId !== route.classroomId) return '';
+      if (route.classroomId && pending.classroomId !== route.classroomId) return '';
       return pending.returnUrl || '';
     }
 
@@ -3275,7 +3290,7 @@
     Store.setPendingAutoStart(classroomId, returnUrl);
     const aiRoute = AiWorkspace.getRoute();
     if (aiRoute) {
-      panel.log(`正在匹配处理逻辑：ai-workspace/lms-graph/${aiRoute.type}`);
+      panel.log(`正在匹配处理逻辑：${aiRoute.source || 'ai-workspace/lms-graph'}/${aiRoute.type}`);
       new AiWorkspaceRunner(panel).run();
       return;
     }
@@ -3314,13 +3329,17 @@
       panel.setStartHandler(start);
       const pendingAutoStart = Store.getPendingAutoStart();
       const currentClassroomId = Utils.getCurrentClassroomId();
-      if (
-        pendingAutoStart
+      const contentRoute = AiWorkspace.getRoute();
+      const canResumeCurrentPage = pendingAutoStart
         && Utils.isSupportedLearningPage()
-        && currentClassroomId
-        && pendingAutoStart.classroomId === currentClassroomId
+        && (
+          (currentClassroomId && pendingAutoStart.classroomId === currentClassroomId)
+          || (!currentClassroomId && contentRoute?.source === 'v2/web/xcloud' && pendingAutoStart.returnUrl)
+        );
+      if (
+        canResumeCurrentPage
       ) {
-        panel.log(`检测到跨页面跳转，自动恢复刷课：课堂 ${currentClassroomId}`);
+        panel.log(`检测到跨页面跳转，自动恢复刷课：课堂 ${currentClassroomId || pendingAutoStart.classroomId}`);
         setTimeout(() => panel.start(), 1200);
       }
     } catch (err) {
