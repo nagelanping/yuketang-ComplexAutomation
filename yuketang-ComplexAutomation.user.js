@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         yuketang-ComplexAutomation
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.0
+// @version      0.9.1
 // @description  雨课堂复合自动化：视频/PPT自动浏览 + OpenAI-compatible 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -12,10 +12,6 @@
 // @grant        GM_info
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
-// @connect      api.openai.com
-// @connect      api.moonshot.cn
-// @connect      api.deepseek.com
-// @connect      dashscope.aliyuncs.com
 // @connect      *
 // @connect      cdn.jsdelivr.net
 // @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
