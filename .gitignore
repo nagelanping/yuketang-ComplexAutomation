@@ -3,3 +3,4 @@ log/
 *.tmp
 .DS_Store
 node_modules/
+.claude/
