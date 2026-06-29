@@ -26,8 +26,9 @@ This file provides guidance to LLM Agents when working with code in this reposit
 
 ## 架构
 
-启动链路：`boot()`（第 ~3176 行）→ 跳过 iframe → `createPanel()` 建 UI →
-读 `pendingAutoStart` 决定是否跨页自动续跑 → `start()`（第 ~3141 行）做路由分发。
+启动链路：`boot()` → 跳过 iframe → `createPanel()` 建 UI →
+读 `pendingAutoStart` 决定是否跨页自动续跑 → `start()` 做路由分发。
+（定位用 grep，不要记行号：`grep -n "function boot\|function start\|function createPanel"`。）
 
 ### 路由分发（`start()`）
 
@@ -38,17 +39,17 @@ This file provides guidance to LLM Agents when working with code in this reposit
 
 跨页续跑机制：启动时把 `{classroomId, returnUrl}` 写入 `pendingAutoStart`，页面跳转后 `boot()` 比对 `classroomId` 命中则自动 `panel.start()`。这是脚本能连续处理多个章节/跳转页面的关键。
 
-### 核心模块（均为单文件内的对象/类）
+### 核心模块（均为单文件内的对象/类，按需 `grep -n "const Config\|const Solver"` 等定位）
 
-- `Config`（~31）：用户可调参数 + `storageKeys`（localStorage 键名，标注"勿动"）。
-- `Utils`（~48）：`sleep`/`poll`/`inIframe`/路由解析（`getCurrentClassroomId` 用多组正则从 path/query 提取）。
-- `Store`（~149）：localStorage 读写层，所有持久化（进度、AI 配置、功能开关、续跑标记）走这里。
-- `createPanel()`（~242）：UI 面板 + AI 配置表单 + 日志区，约 500 行，含所有 DOM 字符串。
-- `FontPatch`（~749）：雨课堂字体反混淆补丁，**默认关闭**，源自 `ref/yuketang-deobfuscator`。
-- `Player`（~791）：视频/音频自动播放（倍速、静音、防暂停 `observePause`、等待结束 `waitForEnd`）。
-- `AiWorkspace`（~1023）：ai-workspace 路由专用工具。
-- `preventScreenCheck()`（~1262）：防切屏检测。
-- `Solver`（~1284）：截图 + 多模态答题，见下。
+- `Config`：用户可调参数 + `storageKeys`（localStorage 键名，标注"勿动"）。
+- `Utils`：`sleep`/`poll`/`inIframe`/路由解析（`getCurrentClassroomId` 用多组正则从 path/query 提取）。
+- `Store`：localStorage 读写层，所有持久化（进度、AI 配置、功能开关、续跑标记）走这里。
+- `createPanel()`：UI 面板 + AI 配置表单 + 日志区，约 500 行，含所有 DOM 字符串。
+- `FontPatch`：雨课堂字体反混淆补丁，**默认关闭**，源自 `ref/yuketang-deobfuscator`。
+- `Player`：视频/音频自动播放（倍速、静音、防暂停 `observePause`、等待结束 `waitForEnd`）。
+- `AiWorkspace`：ai-workspace 路由专用工具。
+- `preventScreenCheck()`：防切屏检测。
+- `Solver`：截图 + 多模态答题，见下。
 - 四个 Runner（`V2Runner`/`ProOldRunner`/`ProNewRunner`/`AiWorkspaceRunner`）：各自的页面遍历主循环。
 
 ### Solver（截图答题核心）
