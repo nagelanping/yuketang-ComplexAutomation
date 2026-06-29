@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.7
+// @version      0.9.9
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -2337,6 +2337,81 @@
       return false;
     }
 
+    clickInCurrentTab(element) {
+      if (!element) return;
+      const doc = element.ownerDocument || document;
+      const view = doc.defaultView || window;
+      const touchedLinks = [...element.querySelectorAll('a[target]')].map(link => ({
+        link,
+        target: link.getAttribute('target')
+      }));
+      for (const { link } of touchedLinks) {
+        link.setAttribute('target', '_self');
+      }
+
+      const restoreFns = [];
+      let restored = false;
+      let restoreTimer = null;
+      const navigateCurrentTab = url => {
+        if (!url) return;
+        try {
+          location.href = new URL(String(url), location.href).href;
+        } catch (_) {
+          location.href = String(url);
+        }
+      };
+      const captureLinkClick = event => {
+        const link = event.target?.closest?.('a[href]');
+        if (!link || !element.contains(link)) return;
+        const href = link.getAttribute('href') || '';
+        if (!href || href.startsWith('#') || /^javascript:/i.test(href)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        navigateCurrentTab(link.href || href);
+      };
+      const restore = () => {
+        if (restored) return;
+        restored = true;
+        clearTimeout(restoreTimer);
+        doc.removeEventListener('click', captureLinkClick, true);
+        view.removeEventListener('pagehide', restore);
+        for (const { link, target } of touchedLinks) {
+          if (target == null) link.removeAttribute('target');
+          else link.setAttribute('target', target);
+        }
+        restoreFns.forEach(fn => {
+          try { fn(); } catch (_) { }
+        });
+      };
+      const openInCurrentTab = url => {
+        navigateCurrentTab(url);
+        return window;
+      };
+      for (const win of [...new Set([view, typeof unsafeWindow !== 'undefined' ? unsafeWindow : null].filter(Boolean))]) {
+        try {
+          const originalOpen = win.open;
+          win.open = openInCurrentTab;
+          restoreFns.push(() => { win.open = originalOpen; });
+        } catch (_) {
+          // Some browsers/userscript sandboxes may reject patching window.open.
+        }
+      }
+      doc.addEventListener('click', captureLinkClick, true);
+      view.addEventListener('pagehide', restore);
+      restoreTimer = setTimeout(restore, 15000);
+
+      const directLink = [...element.querySelectorAll('a[href]')].find(link => {
+        const href = link.getAttribute('href') || '';
+        return href && !href.startsWith('#') && !/^javascript:/i.test(href);
+      });
+
+      if (directLink) {
+        navigateCurrentTab(directLink.href || directLink.getAttribute('href'));
+        return;
+      }
+      element.click();
+    }
+
     // 三态分类：'completed' | 'in_progress' | 'not_started'
     // 对应雨课堂右侧状态列：已完成/已读、(N/M 或 x%) 进行中、未开始/未读
     getCompletionState(statusText) {
@@ -2492,7 +2567,7 @@
     }
 
     async handleVideo(course) {
-      course.click();
+      this.clickInCurrentTab(course);
       if (await this.waitForExternalHandoff(1500)) return;
       await Utils.sleep(3000);
       const progressNode = document.querySelector('.progress-wrap')?.querySelector('.text');
@@ -2582,7 +2657,7 @@
 
     async playAudioItem(item, title) {
       this.panel.log(`开始播放音频：${title}`);
-      item.click();
+      this.clickInCurrentTab(item);
       if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
       Player.applyMediaDefault(document.querySelector('audio'));
@@ -2594,7 +2669,7 @@
 
     async playVideoItem(item, title) {
       this.panel.log(`开始播放视频：${title}`);
-      item.click();
+      this.clickInCurrentTab(item);
       if (await this.waitForExternalHandoff()) return;
       await Utils.sleep(2500);
       Player.applySpeed();
