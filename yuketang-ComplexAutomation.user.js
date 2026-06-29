@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      0.9.4
+// @version      0.9.7
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -120,7 +120,7 @@
     },
     getCurrentClassroomId() {
       const query = new URLSearchParams(location.search);
-      const queryId = query.get('classroom_id');
+      const queryId = query.get('classroom_id') || query.get('classroomId') || query.get('cid');
       if (queryId) return queryId;
 
       const path = location.pathname;
@@ -162,8 +162,8 @@
         const timer = setTimeout(finish, timeout);
       });
     },
-    async getDDL() {
-      const element = document.querySelector('video') || document.querySelector('audio');
+    async getDDL(media = null) {
+      const element = media || document.querySelector('video') || document.querySelector('audio');
 
       const fallback = 180_000;
       if (!element) return fallback;
@@ -1134,7 +1134,13 @@
       if (!video) return () => { };
       const doc = video.ownerDocument || document;
       const target = doc.getElementsByClassName('play-btn-tip')[0];
-      // 自动播放
+      let retryTimer = null;
+      const clearRetry = () => {
+        if (!retryTimer) return;
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      };
+      // 自动播放；随堂题/播放器遮罩强制暂停时也会反复恢复。
       const playVideo = () => {
         if (!shouldResume() || video.ended || this.isNearEnd(video)) return;
         this.prepareMedia(video);
@@ -1142,28 +1148,44 @@
         video.play().catch(e => {
           if (!shouldResume() || video.ended || this.isNearEnd(video)) return;
           console.warn('自动播放失败:', e);
-          setTimeout(playVideo, 3000);
+          clearRetry();
+          retryTimer = setTimeout(playVideo, 3000);
         });
       };
       playVideo();
-      if (!target) return () => { };
-      const observer = new MutationObserver(list => {
-        for (const mutation of list) {
-          if (
-            mutation.type === 'childList'
-            && target.innerText === '播放'
-            && shouldResume()
-            && !video.ended
-            && !this.isNearEnd(video)
-          ) {
-            this.prepareMedia(video);
-            this.clickBigPlayButton(video);
-            video.play();
+      const intervalTimer = setInterval(() => {
+        if (video.paused && !video.ended && !this.isNearEnd(video)) playVideo();
+      }, 1000);
+      video.addEventListener('pause', playVideo);
+      doc.addEventListener('visibilitychange', playVideo);
+      const view = doc.defaultView || window;
+      view.addEventListener('focus', playVideo);
+
+      let observer = null;
+      if (target) {
+        observer = new MutationObserver(list => {
+          for (const mutation of list) {
+            if (
+              (mutation.type === 'childList' || mutation.type === 'characterData')
+              && /播放|play/i.test(target.innerText || '')
+              && shouldResume()
+              && !video.ended
+              && !this.isNearEnd(video)
+            ) {
+              playVideo();
+            }
           }
-        }
-      });
-      observer.observe(target, { childList: true });
-      return () => observer.disconnect();
+        });
+        observer.observe(target, { childList: true, characterData: true, subtree: true });
+      }
+      return () => {
+        clearRetry();
+        clearInterval(intervalTimer);
+        video.removeEventListener('pause', playVideo);
+        doc.removeEventListener('visibilitychange', playVideo);
+        view.removeEventListener('focus', playVideo);
+        if (observer) observer.disconnect();
+      };
     },
     waitForEnd(media, timeout = 0) {
       return new Promise(resolve => {
@@ -1251,7 +1273,30 @@
           };
         }
       }
+      const genericV2Route = this.getGenericV2ContentRoute();
+      if (genericV2Route) return genericV2Route;
       return null;
+    },
+    getGenericV2ContentRoute() {
+      if (!Utils.isV2ContentPage()) return null;
+      const query = new URLSearchParams(location.search);
+      const pathText = decodeURIComponent(`${location.pathname} ${location.search}`);
+      let type = this.normalizeRouteType(pathText, pathText);
+      if (!this.isMediaRouteType(type) && !this.isExerciseRouteType(type)) {
+        if (this.getMediaCandidates().length || document.querySelector('.play-btn-tip, .video-js, xt-player, xt-wrap')) {
+          type = 'video';
+        } else {
+          type = 'content';
+        }
+      }
+      const parts = location.pathname.split('/').filter(Boolean);
+      return {
+        classroomId: query.get('classroom_id') || query.get('classroomId') || query.get('cid') || '',
+        type,
+        leafId: query.get('leaf_id') || query.get('leafId') || parts[parts.length - 1] || '',
+        nodeId: query.get('node_id') || query.get('nodeId') || '',
+        source: 'v2/web/content'
+      };
     },
     normalizeRouteType(rawType = '', pathText = '') {
       const text = `${rawType} ${pathText}`.toLowerCase();
@@ -3304,7 +3349,7 @@
               return true;
             }
             return false;
-          }, { interval: 1000, timeout: await Utils.getDDL() })
+          }, { interval: 1000, timeout: await Utils.getDDL(media) })
         ]);
         media.removeEventListener('ended', onEnded);
         playbackState.completed = true;
@@ -3441,12 +3486,12 @@
 
     async run() {
       preventScreenCheck();
-      const route = AiWorkspace.getRoute();
+      const route = AiWorkspace.getRoute() || AiWorkspace.getGenericV2ContentRoute();
       if (!route) {
         this.panel.log('当前页面已离开 ai-workspace/lms-graph', 'warning');
         return;
       }
-      if (!route.leafId) {
+      if (!route.leafId && route.type !== 'content') {
         this.panel.log('未能识别当前知识点', 'warning');
         return;
       }
@@ -3455,6 +3500,11 @@
         ok = await this.handleMedia(route);
       } else if (AiWorkspace.isExerciseRouteType(route.type)) {
         ok = await this.handleExercise(route);
+      } else if (route.type === 'content') {
+        ok = await this.handleMedia(route);
+        if (!ok && Store.getFeatureConf().autoAI) {
+          ok = await this.handleExercise(route);
+        }
       } else {
         this.panel.log(`当前类型为 ${route.type}，最小方案暂不自动处理`, 'warning');
         return;
@@ -3486,7 +3536,7 @@
       // v2 路线必须在课程列表页运行，避免在单个课件/视频页误启动主循环
       if (!document.querySelector('.logs-list')) {
         const pendingAutoStart = Store.getPendingAutoStart();
-        const contentRoute = AiWorkspace.getRoute();
+        const contentRoute = AiWorkspace.getRoute() || AiWorkspace.getGenericV2ContentRoute();
         if (pendingAutoStart?.returnUrl && Utils.isV2ContentPage() && contentRoute) {
           panel.log(`检测到 V2 内容页，接管处理：${contentRoute.source}/${contentRoute.type}`);
           new AiWorkspaceRunner(panel).run();
@@ -3520,12 +3570,12 @@
       panel.setStartHandler(start);
       const pendingAutoStart = Store.getPendingAutoStart();
       const currentClassroomId = Utils.getCurrentClassroomId();
-      const contentRoute = AiWorkspace.getRoute();
+      const isV2ContinuationPage = Utils.isV2ContentPage() && pendingAutoStart?.returnUrl;
       const canResumeCurrentPage = pendingAutoStart
         && Utils.isSupportedLearningPage()
         && (
-          (currentClassroomId && pendingAutoStart.classroomId === currentClassroomId)
-          || (!currentClassroomId && Utils.isV2ContentPage() && contentRoute && pendingAutoStart.returnUrl)
+          isV2ContinuationPage
+          || (currentClassroomId && pendingAutoStart.classroomId === currentClassroomId)
         );
       if (
         canResumeCurrentPage
