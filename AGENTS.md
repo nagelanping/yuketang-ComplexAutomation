@@ -82,15 +82,24 @@ Each `V2Runner.run()` pass:
 
 1. Calls `autoSlide()` to trigger lazy loading.
 2. Scans top-level `.logs-list` children in DOM order.
-3. Picks the first item whose `getCompletionState(...)` is not `completed` and whose FailGate key is neither skipped nor exhausted.
-4. Dispatches one handler.
-5. Handler processes one item and usually calls `returnToList()`.
-6. `returnToList()` navigates back to the catalog URL, causing a full page reload.
-7. `boot()` sees matching `pendingAutoStart` and restarts the loop.
+3. Skips deliberate non-entry items in place, such as exams, unknown types, and disabled top-level homework. These must not call `returnToList()` or click the catalog item.
+4. Picks the first remaining item whose `getCompletionState(...)` is not `completed` and whose FailGate key is neither skipped nor exhausted.
+5. Dispatches one handler.
+6. Handler processes one item and returns whether this round made progress.
+7. `returnToList()` first uses the site's history stack to return to the catalog and waits for `.logs-list`; after the catalog is visible it reloads the catalog page so the next scan reads fresh server-side progress.
+8. `boot()` sees matching `pendingAutoStart`, restores the panel logs from `sessionStorage`, and starts the next single-item loop.
 
-This means progress advances because the server-side DOM status changes after reload, not because the script remembers "the next index".
+`V2Runner.run()` is a single-item loop body, not a long-running in-memory traversal. It must not continue to a second content item after a handler returns to or reloads the catalog. This means progress advances because the server-side DOM status changes after reload, not because the script remembers "the next index".
 
-Startup writes `{classroomId, returnUrl}` into `pendingAutoStart`. It records where to resume, not which item to resume from. V2 item clicks may briefly add `handoff: {type, title, source, ts}` so content pages whose URL/DOM route is ambiguous, including non-`/v2/web` playback pages, can be handled as the clicked media/exercise type; clear this handoff when returning to the catalog scan and do not treat it as a progress cursor.
+Startup writes `{classroomId, returnUrl}` into `pendingAutoStart`. It records where to resume, not which item to resume from.
+
+`returnToList()` reloads or navigates and then throws `NavigationStop`; `runRoute(...)` catches this internal control-flow exception. Keep this pattern so old async stacks stop immediately after navigation instead of continuing to mutate FailGate or UI state.
+
+V2 item entry is intentionally KISS: click the catalog item through the site UI, process the resulting in-site page state, return to the catalog, then rescan server-side DOM progress. Do not add "new page handoff" state or focus/visibility based stop logic for V2 catalog items; Rain Classroom often changes views inside the same web app/history stack, and forcing URL navigation can break its return behavior.
+
+V2 videos are replayed from the beginning each round. A video round counts as progress only when the page progress text confirms completion. If playback reaches the end but progress text has not updated, return to the catalog for a fresh rescan but still let FailGate count the unconfirmed round, so a permanently stale server-side status cannot loop forever.
+
+Panel logs are persisted in `sessionStorage` under `ykt_panel_logs` so catalog reloads can preserve the running trace. Keep the retention bounded.
 
 ## Completion State
 
@@ -126,11 +135,11 @@ Batch handling also advances only one unfinished child item per pass, then retur
 
 - Storage key: `ykt_fail_counts`
 - `key(...parts)` builds stable classroom/title/index keys.
-- `bump(key)` increments attempts before entering an item.
+- `bump(key)` increments attempts only after a handler returns no progress.
 - `exhausted(key)` skips after `maxAttempts`.
 - `skip(key)` marks deliberate skips such as exams, unknown types, or disabled homework.
 - `skipped(key)` checks deliberate skip state.
-- `reset(key)` clears parent counts when a batch child made real progress.
+- `reset(key)` clears counts when an item or batch child made progress.
 - `clear()` is wired to the panel clear-failure action together with `Store.clearPendingAutoStart()`.
 
 Use sessionStorage behavior deliberately: closing the tab clears it. Do not use FailGate to remember course progress across sessions.
@@ -139,10 +148,10 @@ Use sessionStorage behavior deliberately: closing the tab clears it. Do not use 
 
 Feature flags live in `Store.getFeatureConf()`.
 
-When `autoAI === false`, the V2 scanner enters pure media mode:
+When `autoAI === false`, V2 top-level homework handling is a deliberate in-place skip:
 
-- top-level homework-like items are ignored before entering them
-- homework children inside batch sections are ignored at the child level
+- top-level homework-like items log that AI answering is disabled, mark the item skipped, and continue scanning without entering the item
+- homework children inside batch sections follow the same skip behavior
 - media, audio, courseware, and relevant batch sections still run
 
 Do not make disabled homework cause page entry or reload loops.
