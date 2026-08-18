@@ -1,4 +1,4 @@
-# **IMPORTANT**
+## **IMPORTANT**
 
 以下 Prompt 是提供给 JS 脚本中 AI 视图模型使用的 Prompt
 使用：由 user 修改、调整并确认 Prompt 后，再硬编码到 JS 脚本中，遵循单文件交付原则
