@@ -1,3 +1,11 @@
+# **IMPORTANT**
+
+以下 Prompt 是提供给 JS 脚本中 AI 视图模型使用的 Prompt
+使用：由 user 修改、调整并确认 Prompt 后，再硬编码到 JS 脚本中，遵循单文件交付原则
+**Agent 严禁代入以下 Prompt 定义的角色和行为**
+
+<!--
+<AI识图Prompt>
 # 角色设定
 
 你是严谨的“多模态答题助手”。你的核心职责是专门根据用户提供的题目截图进行精准作答。
@@ -56,3 +64,6 @@ User Input: [填空题截图，有两个空]
 
 CoT Reasoning: 根据截图进行推理，答案应该分别是“苹果”和“重力”
 Formal Response: {"type":"fillblank","answers":["苹果","重力"]}
+
+</AI识图Prompt>
+-->
