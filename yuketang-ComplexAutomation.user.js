@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      1.1.3
+// @version      1.2.2
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -1218,19 +1218,23 @@
     },
     findPlayButton(doc = document) {
       const selectors = [
-        ".play-btn-tip",
+        // V2 大播放按钮优先（ai-workspace 的 xt-tip.play-btn-tip 只是 tooltip，用 :not(xt-tip) 排除）
+        ".play-btn-tip:not(xt-tip)",
+        // ai-workspace xt 播放器真播放键（控制条 / 中央）
+        "xt-playbutton",
+        ".xt_video_player_play_btn",
+        "xt-bigbutton",
+        ".xt_video_player_big_play_layer",
         ".play-btn",
         ".video-js .vjs-big-play-button",
         ".xt-play-button",
         ".xt-startbutton",
-        ".xt_video_player_play_btn",
-        ".xt_video_player_common_icon",
-        '[class*="play"][class*="btn"]',
-        '[class*="player"][class*="play"]',
+        '[class*="play"][class*="btn"]:not([class*="tip"])',
+        '[class*="player"][class*="play"]:not([class*="tip"])',
         ".player-play",
         ".player-start",
-        '[class*="play-button"]:not([class*="pause"])',
-        '[class*="play-btn"]',
+        '[class*="play-button"]:not([class*="pause"]):not([class*="tip"])',
+        '[class*="play-btn"]:not([class*="tip"])',
       ];
       for (const sel of selectors) {
         const el = doc.querySelector(sel);
@@ -1249,6 +1253,7 @@
               "",
           ).trim();
           const cls = String(el.className || "");
+          if (/tip/i.test(cls)) return false; // 跳过 tooltip（如 play-btn-tip），避免点到非按钮
           return (
             /播放|play/i.test(text) && !/暂停|pause/i.test(`${text} ${cls}`)
           );
@@ -1300,12 +1305,12 @@
       this.clickBigPlayButton(media);
       media.play().catch(() => {});
     },
-    async startPlayback(media, maxRetries = 5) {
+    async startPlayback(media, maxRetries = 5, { allowClick = true } = {}) {
       if (!media) return false;
       await this.waitForReady(media);
       this.prepareMedia(media);
       for (let i = 0; i < maxRetries; i++) {
-        this.clickBigPlayButton(media);
+        if (allowClick) this.clickBigPlayButton(media);
         await Utils.sleep(300);
         try {
           this.prepareMedia(media);
@@ -1329,7 +1334,7 @@
       }
       await Utils.sleep(300);
     },
-    observePause(video, shouldResume = () => true) {
+    observePause(video, shouldResume = () => true, { allowClick = true } = {}) {
       if (!video) return () => {};
       const doc = video.ownerDocument || document;
       const target = doc.getElementsByClassName("play-btn-tip")[0];
@@ -1374,7 +1379,7 @@
         }
         lastResumeAt = now;
         this.prepareMedia(video);
-        if (withClick) this.clickBigPlayButton(video);
+        if (withClick && allowClick) this.clickBigPlayButton(video);
         video.play().catch((e) => {
           if (!shouldAttemptResume(force)) return;
           console.warn("自动播放失败:", e);
@@ -1738,6 +1743,10 @@
       return this.normalizeText(
         document.querySelector(".leaf-item.is-active")?.innerText,
       );
+    },
+    // ai-workspace 页面自身的课程列表（直接从该页启动刷课时逐项遍历）
+    getAllScourse() {
+      return document.querySelectorAll(".nav-item-leaf-box");
     },
     getExerciseDocument() {
       const localHasExercise =
@@ -4162,6 +4171,8 @@
   class AiWorkspaceRunner {
     constructor(panel) {
       this.panel = panel;
+      // 死循环保护：记录上一轮点击后尝试推进到的下标，若点击后激活项未前进则相等
+      this._lastAdvanceIndex = -1;
     }
 
     getExerciseQuestionLabel(root) {
@@ -4223,6 +4234,54 @@
       return true;
     }
 
+    // 当前知识点处理结束后决定下一步：有来源目录则返回该目录；否则按 ai-workspace 页面自身
+    // 知识点列表，从“当前激活项”的下一项继续（激活项每轮从 DOM 现读，不缓存索引/进度）
+    async autoSelect() {
+      const returnUrl = this.getReturnUrl();
+      if (returnUrl) {
+        await this.returnToSource();
+        return;
+      }
+      const list = AiWorkspace.getAllScourse();
+      if (!list || !list.length) {
+        this.panel.log(
+          "ai-workspace 页面未找到知识点列表，无法继续",
+          "warning",
+        );
+        this.panel.resetStartButton("开始");
+        return;
+      }
+      const activateIndex = Array.from(list).findIndex(
+        (el) => el.firstChild && el.firstChild.classList.contains("is-active"),
+      );
+      if (activateIndex === -1) {
+        this.panel.log("未能识别当前激活知识点，无法确定下一项", "warning");
+        this.panel.resetStartButton("开始");
+        return;
+      }
+      await this.handleNext(list, activateIndex + 1);
+    }
+
+    async handleNext(list, count) {
+      if (count >= list.length) {
+        this.panel.log("课程刷完啦 🎉");
+        this.panel.resetStartButton("开始");
+        Store.clearPendingAutoStart();
+        return;
+      }
+      // 死循环保护：上一轮点击后激活项未前进时，本轮算出的下标会重复，停止递归
+      if (this._lastAdvanceIndex === count) {
+        this.panel.log("连续两次停在同一知识点，已停止以避免死循环", "warning");
+        this.panel.resetStartButton("开始");
+        return;
+      }
+      this._lastAdvanceIndex = count;
+      const item = list[count];
+      (item.firstChild || item).click();
+      await Utils.sleep(2000);
+      await this.run(false);
+    }
+
     async handleMedia(route) {
       const title =
         AiWorkspace.getActiveLeafTitle() || `${route.type} ${route.leafId}`;
@@ -4253,7 +4312,11 @@
       // 确保从开头播放，避免中间段未刷到
       Player.prepareMedia(media);
       await Player.playFromStart(media);
-      const startedImmediately = await Player.startPlayback(media);
+      // 启动阶段不点按钮（避免对切换式播放键连点导致反复 play/pause 闪动），
+      // 起播/恢复交给 observePause 的低频受控点击（命中真正的 xt-playbutton）
+      const startedImmediately = await Player.startPlayback(media, 5, {
+        allowClick: false,
+      });
       if (!startedImmediately) {
         this.panel.log("首次播放未确认启动，继续接管并重试", "warning");
       }
@@ -4504,8 +4567,9 @@
       return true;
     }
 
-    async run() {
-      preventScreenCheck();
+    async run(preventScreenCheckSwitch = true) {
+      // 防切屏只在外部首次启动时启用一次，避免逐项刷时重复注入
+      if (preventScreenCheckSwitch) preventScreenCheck();
       const route =
         AiWorkspace.getRoute() || AiWorkspace.getGenericV2ContentRoute();
       if (!route) {
@@ -4528,16 +4592,17 @@
         }
       } else {
         this.panel.log(
-          `当前类型为 ${route.type}，最小方案暂不自动处理`,
+          `当前类型为 ${route.type}，暂不自动处理此类型，自动跳过`,
           "warning",
         );
-        return;
+        await Utils.sleep(1500);
+        ok = true;
       }
       if (!ok) {
-        await this.returnToSource();
-        return;
+        this.panel.log("当前项未能确认完成，仍继续下一项", "warning");
       }
-      await this.returnToSource();
+      // 处理完当前知识点后进入下一项（返回目录页或本页课程列表逐项推进）
+      await this.autoSelect();
     }
   }
 
