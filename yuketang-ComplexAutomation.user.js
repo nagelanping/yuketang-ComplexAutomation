@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      1.4.1
+// @version      2.0.0
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -130,15 +130,11 @@
         }, interval);
       });
     },
-    // 使用UI课程完成度来判别是否完成课程
+    // 内容页完成度：与 V2Runner.getCompletionState() 口径一致——只有 100% / 已完成算完成，
+    // 98% / 99% 一律当作未完成（临近完成也继续等它走到终值，别提前算完成）。
     isProgressDone(text) {
       if (!text) return false;
-      return (
-        text.includes("100%") ||
-        text.includes("99%") ||
-        text.includes("98%") ||
-        text.includes("已完成")
-      );
+      return text.includes("100%") || text.includes("已完成");
     },
     // 完成状态文案
     stateLabel(state) {
@@ -2383,6 +2379,8 @@
   }
 
   // ---- Screenshot & Multimodal AI ----
+  // 选项字母表：平台题目选项没有确认的上限，按 A–Z 生成，越界的由 answerToIndices 过滤并告警
+  const OPTION_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const Solver = {
     async captureQuestionImage(element) {
       if (!element) throw new Error("无题目元素");
@@ -3202,7 +3200,8 @@
         if (/正确|对|true|yes/i.test(raw))
           return { type: questionType, answers: ["对"], raw };
       }
-      const letters = raw.toUpperCase().match(/[A-F]/g) || [];
+      // 只认独立成词的单个字母：模型回一句英文解释时，词里的字母不应被当成选项（英文词里 A–F 很常见）
+      const letters = raw.toUpperCase().match(/\b[A-Z]\b/g) || [];
       const unique = [...new Set(letters)];
       return {
         type: questionType,
@@ -3212,7 +3211,6 @@
     },
 
     answerToIndices(parsed, optionCount) {
-      const map = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5 };
       const answers = parsed.answers || [];
       if (parsed.type === "truefalse") {
         const first = String(answers[0] || "").trim();
@@ -3225,16 +3223,26 @@
         const letters =
           String(value || "")
             .toUpperCase()
-            .match(/[A-F]/g) || [];
+            .match(/[A-Z]/g) || [];
         for (const letter of letters) {
-          if (map[letter] !== undefined) indices.push(map[letter]);
+          const index = OPTION_LETTERS.indexOf(letter);
+          if (index >= 0) indices.push(index);
         }
       }
-      return [...new Set(indices)].filter(
-        (index) => !optionCount || index < optionCount,
+      const unique = [...new Set(indices)];
+      const outOfRange = unique.filter(
+        (index) => optionCount && index >= optionCount,
       );
+      if (outOfRange.length)
+        panel.log(
+          `AI 答案超出现有 ${optionCount} 个选项，忽略：${outOfRange.map((i) => OPTION_LETTERS[i]).join(", ")}`,
+          "warning",
+        );
+      return unique.filter((index) => !optionCount || index < optionCount);
     },
 
+    // 返回值：refused（AI 拒答）/ incomplete（缺选项、缺答案、缺提交按钮）/ filled（已填并点了提交）。
+    // filled 不等于提交成功：提交按钮点了但服务端/页面未回写时，由调用方按实机确认的判据复核。
     async autoSelectAndSubmit(aiResponse, itemBodyElement) {
       const questionType = this.detectQuestionType(itemBodyElement);
       const parsed = this.parseAIAnswer(aiResponse, questionType);
@@ -3250,20 +3258,20 @@
       if (questionType === "fillblank") {
         if (!parsed.answers.length) {
           panel.log("未提取到填空答案，请人工检查", "warning");
-          return;
+          return "incomplete";
         }
         await this.fillBlanks(parsed.answers, itemBodyElement);
       } else {
         const listContainer = this.getOptionContainer(itemBodyElement);
         if (!listContainer) {
           panel.log("未找到选项容器", "warning");
-          return;
+          return "incomplete";
         }
         const options = this.getOptionElements(listContainer);
         const targetIndices = this.answerToIndices(parsed, options.length);
         if (!targetIndices.length) {
           panel.log("未提取到有效选项，请人工检查", "warning");
-          return;
+          return "incomplete";
         }
         panel.log(`AI 建议选：${parsed.answers.join(", ")}`, "warning");
         for (const idx of targetIndices) {
@@ -3316,12 +3324,13 @@
         }
         return null;
       })();
-      if (submitBtn) {
-        panel.log("正在提交...");
-        submitBtn.click();
-      } else {
-        panel.log("未找到提交按钮，请手动提交", "warning");
+      if (!submitBtn) {
+        panel.log("未找到提交按钮，本轮不记为完成", "warning");
+        return "incomplete";
       }
+      panel.log("正在提交...");
+      submitBtn.click();
+      return "filled";
     },
   };
 
@@ -4465,7 +4474,9 @@
       return true;
     }
 
-    async solveExerciseQuestion(root, label = "") {
+    // tab / index 用于提交后的确认：实机观测到 isProblemSubmitted / isExerciseTabAnswered 会在提交后回写为真，
+    // 是比「点了提交按钮」可靠的判据。无题号列表的路径没有 tab，退回 DOM 状态判据（isExerciseAnswered）。
+    async solveExerciseQuestion(root, label = "", tab = null, index = -1) {
       const questionRoot = AiWorkspace.getExerciseQuestionBody(root);
       if (!questionRoot) {
         this.panel.log("未找到题目容器，停止当前轮次", "warning");
@@ -4515,6 +4526,31 @@
             ) {
               this.panel.log("已通知来源目录跳过该条目，等待人工处理");
             }
+            return false;
+          }
+          if (result !== "filled") {
+            this.panel.log(
+              `${label || "当前题目"} 未能填写或提交（${result}），本轮记未推进`,
+              "warning",
+            );
+            return false;
+          }
+          // 已点提交，但「点了按钮」不等于「提交成功」：用实机确认的回写判据复核，确认不到就按未推进返回。
+          const confirmed = await Utils.poll(
+            () =>
+              this.isExerciseQuestionSubmitted(
+                AiWorkspace.getExerciseContainer() || root,
+                tab,
+                index,
+                true,
+              ),
+            { interval: 500, timeout: 8000 },
+          );
+          if (!confirmed) {
+            this.panel.log(
+              `${label || "当前题目"} 提交后未确认到已提交回写，本轮记未推进`,
+              "warning",
+            );
             return false;
           }
           await Utils.sleep(1200);
@@ -4588,6 +4624,7 @@
       const tabs = AiWorkspace.getExerciseQuestionTabs(root);
       if (tabs.length) {
         this.panel.log(`检测到题目索引 ${tabs.length} 个，按题号顺序作答`);
+        let allSubmitted = true;
         for (let i = 0; i < tabs.length; i++) {
           const currentRoot = AiWorkspace.getExerciseContainer() || root;
           const currentTabs = AiWorkspace.getExerciseQuestionTabs(currentRoot);
@@ -4608,9 +4645,16 @@
             this.panel.log(`第 ${i + 1} 题已提交，跳过`, "warning");
             continue;
           }
-          await this.solveExerciseQuestion(latestRoot, `第 ${i + 1} 题`);
+          const solved = await this.solveExerciseQuestion(
+            latestRoot,
+            `第 ${i + 1} 题`,
+            currentTab,
+            i,
+          );
+          if (!solved) allSubmitted = false;
         }
-        return true;
+        // 只要有一题未确认提交成功，就不能把这个知识点报成已完成（下面靠目录重扫与 FailGate 兜底）
+        return allSubmitted;
       }
 
       this.panel.log(
@@ -4618,6 +4662,7 @@
         "warning",
       );
       let previousFingerprint = "";
+      let allSubmitted = true;
       for (let i = 0; i < 20; i++) {
         const currentRoot = AiWorkspace.getExerciseContainer() || root;
         const questionRoot = AiWorkspace.getExerciseQuestionBody(currentRoot);
@@ -4632,10 +4677,11 @@
             "warning",
           );
         } else {
-          await this.solveExerciseQuestion(
+          const solved = await this.solveExerciseQuestion(
             currentRoot,
             this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`,
           );
+          if (!solved) allSubmitted = false;
         }
         previousFingerprint = fingerprint;
         const moved = await this.advanceExerciseQuestion(
@@ -4644,7 +4690,7 @@
         );
         if (!moved) break;
       }
-      return true;
+      return allSubmitted;
     }
 
     async run(preventScreenCheckSwitch = true) {
@@ -4724,10 +4770,7 @@
     const path = location.pathname.split("/");
     const matchURL = `${url}${path[0]}/${path[1]}/${path[2]}`;
     panel.log(`正在匹配处理逻辑：${matchURL}`);
-    if (
-      matchURL.includes("yuketang.cn/v2/web") ||
-      matchURL.includes("gdufemooc.cn/v2/web")
-    ) {
+    if (matchURL.includes("yuketang.cn/v2/web")) {
       // v2 路线必须在课程列表页运行，避免在单个课件/视频页误启动主循环
       if (!document.querySelector(".logs-list")) {
         const pendingAutoStart = Store.getPendingAutoStart();
@@ -4752,10 +4795,7 @@
         return;
       }
       runRoute(new V2Runner(panel));
-    } else if (
-      matchURL.includes("yuketang.cn/pro/lms") ||
-      matchURL.includes("gdufemooc.cn/pro/lms")
-    ) {
+    } else if (matchURL.includes("yuketang.cn/pro/lms")) {
       if (document.querySelector(".btn-next")) {
         runRoute(new ProNewRunner(panel));
       } else {

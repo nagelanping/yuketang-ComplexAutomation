@@ -88,3 +88,27 @@ README 同步：功能列表注明讨论区自动回复尚未实现；「模型�
 补充（同日，机主指示）：判断题的对/错判定统一到两处、同一条规则——否定标记收窄为「不」（`/不|错|false|no/i`，覆盖 不是/不正确/不对/不符合），并先判否定后判肯定。`parseAIAnswer` 的非 JSON 回退照此简化；`answerToIndices()` 的 `truefalse` 分支同样改序，原先 `answers:["不正确"]` 会按「对」去点第一个选项，现在点第二个。`A`/`B`/`对`/`错`/`true`/`false` 的映射不变。
 
 自测扩到两个函数：肯定 6 例、否定 8 例、JSON 三例、其他题型两例、选项映射两组，全部通过。
+
+## 2026-09-13 工作包 F：显式区分答题提交结果
+
+`Solver.autoSelectAndSubmit()` 原先成功路径不返回值（`undefined`），只在拒答时返回 `"refused"`，于是「点了选项但没找到提交按钮」也被调用方当成完成。现在返回三态：`refused` / `incomplete`（缺选项容器、无有效选项、填空无答案、找不到提交按钮）/ `filled`（已填写并点击了提交按钮）。
+
+`filled` 不等于成功：`solveExerciseQuestion(root, label, tab, index)` 新增后两个参数，用实机观测确认会回写的判据复核——`Utils.poll(() => isExerciseQuestionSubmitted(root, tab, index, true), { interval: 500, timeout: 8000 })`；确认到才返回 true，8 秒没回写则 warning + 未推进。`tab`/`index` 由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，退回纯 DOM 的 `isExerciseAnswered()`。
+
+`handleExercise` 汇总每题结果，有一题没确认成功就返回 false（日志与返回值更诚实，`returnToSource` 与 FailGate 兜底的流程不变）。
+
+验证：`node --check`、`git diff --check` 通过；另三个自测不受影响。实机验证待机主：正常作业不应再出现「提交后未确认到已提交回写」；另需确认无题号列表的单题页面能否被 `isExerciseAnswered()` 确认。
+
+## 2026-09-13 工作包 G / K / L（机主一次性给了决策）
+
+- G（选项字母边界）：按机主指示改为模块级 `OPTION_LETTERS`（A–Z），不再写死 A–F。`answerToIndices` 用 `indexOf` 映射并按实际 `optionCount` 过滤，越界字母打 warning；非 JSON 回退在原文里取字母改用 `\b[A-Z]\b`，避免英文解释的词内字母被当成选项（代价：`AB` 连写不拆分）。
+- K（完成度阈值）：机主定「临近完成也算未完成」，`Utils.isProgressDone()` 去掉 98% / 99%，只认 100% / 已完成，与 `V2Runner.getCompletionState()` 一致。两处仍各自实现，只统一判定标准。
+- L：机主定「MOOC 与雨课堂切割」，删掉 `start()` 里两处 `gdufemooc.cn` 分支（userscript 本就只匹配 `*.yuketang.cn`，原分支不可达）。
+- H / I：机主答复「当前可以正常工作，需要实际检测」，维持现状；另记「大小目录结构因具体课程而异」，不做按单一结构的判定改动。
+- J：机主未发现 Pro 用户级入口，但属「未发现」而非「确认没有」，删除面较大（两个 Runner + Pro 分支 + 持久化游标），留待机主定夺。
+
+验证：`node --check`、`git diff --check`、`tmp/parse-answer-selftest.cjs`（已扩到 A–Z 映射与越界过滤、非 JSON 取字母）通过。
+
+J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」，因此 AUDIT 15（observePause cleanup）与 AUDIT 17（Pro 持久化游标）也暂不做。
+
+版本：`@version` 1.4.1 → **2.0.0**（F/G/K/L 一批：答题提交结果三态、选项字母 A–Z、完成度阈值统一、MOOC 分支删除）。

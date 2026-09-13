@@ -156,7 +156,7 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 
 这个优先级用于处理混合 UI 文本，如 `1% 进行中` 或 `3/6 进行中`。
 
-另有一套口径 `Utils.isProgressDone`（`98%`/`99%`/`100%`/`已完成` 都算完成），用于内容页自查与 Pro 路径。两者一个面向目录状态、一个面向内容页，天然可能不同步（「内容页认为完成、目录页仍认为未完成」）；不要为了「统一」直接把阈值改成同一个数，先取实机样本，见 `AUDIT.md` 第 16 条。
+`Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它走到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
 
 ## 批次数
 
@@ -263,12 +263,22 @@ API 行为：
 
 `type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 记 **error** 日志、提示需要人工介入、**暂停 10 秒**后返回 `"refused"`，且**不选选项、不点提交**；调用方据此跳过该题并继续下一题（`solveExerciseQuestion` 返回 false）。
 
+`autoSelectAndSubmit()` 的返回值是显式的三态，调用方必须分流，**不得把「点了提交按钮」当成提交成功**：
+
+- `"refused"`：AI 拒答（见上）；
+- `"incomplete"`：缺选项容器 / 无有效选项 / 填空无答案 / 找不到提交按钮——本轮记未推进；
+- `"filled"`：已选中或填好并点击了提交按钮。**它还不是成功**：`solveExerciseQuestion` 接着用 `Utils.poll(() => isExerciseQuestionSubmitted(root, tab, index, true), { interval: 500, timeout: 8000 })` 复核实机观测到会回写的判据（`isProblemSubmitted` / `isExerciseTabAnswered`），确认到才返回 `true`，8 秒内没有回写则打 warning 并返回 `false`。
+
+`solveExerciseQuestion(root, label, tab, index)` 的后两个参数就是给这次复核用的，由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，只能退回纯 DOM 的 `isExerciseAnswered()`（`OBSERVE.md` 未单独抽样该判据）。`handleExercise` 会汇总每题结果：有一题没确认成功就返回 `false`（只是日志与返回值更诚实，流程不变——仍 `returnToSource` 重载目录，由目录重扫 + FailGate 兜底）。
+
 `solveExerciseQuestion` 的 refuse 分支还会调用 `FailGate.markRefused(...)`，把来源目录里本次交棒条目的 key 标成 `-2`：这一题既然脚本答不了，那份作业就不可能靠脚本刷完，目录重扫时应当直接跳过，而不是再交棒重试到 FailGate 满 3 次。key 由目录在交棒前写入 `sessionStorage`（`ykt_handoff_key`），子标签继承的是拷贝，因此回写目标是 `window.opener.sessionStorage`；拿不到 opener（用户直接在本页启动、窗口已关）时静默退回原来的重试行为。
 
 判断题的「对 / 错」判定在 `Solver` 里有两处，**都以「不」为否定标记**（`/不|错|false|no/i`，`不` 覆盖不是 / 不正确 / 不对 / 不符合），且都是**先判否定再判肯定**：
 
 - `parseAIAnswer()` 的非 JSON 回退（模型没按 Schema 输出时的兜底）：否定优先，否则「不正确」会先命中「正确」被判成对。同一处还只把**对象**形态的 JSON 当答案对象——裸 `true` / `false` 也是合法 JSON 但没有 `answers`，放行会得到空答案，现在它们落到文本回退。
 - `answerToIndices()` 的选项映射（0 = 对/第一个选项，1 = 错/第二个选项）：否定优先，否则 `answers:["不正确"]` 会去点「对」。
+
+选项字母表是模块级 `OPTION_LETTERS = "A"–"Z"`（v1.4.2 起，不再写死 A–F）：平台题目选项没有确认的上限，映射时按实际 `optionCount` 过滤，被丢掉的越界字母会打一条 warning。非 JSON 回退在原始文本里取字母时用 `\b[A-Z]\b`，只认独立成词的单个字母——模型用英文解释时词内字母（`The` 里的 `e`）不该被当成选项；代价是 `AB` 这种连写不做拆分，多选请让它走 JSON 数组。
 
 改这里跑 `node tmp/parse-answer-selftest.cjs`（从脚本抽出方法体执行，覆盖肯定 / 否定 / JSON / 其他题型回退 / 选项映射）。遇到无法可靠分类的新表达先记样本再补最小规则，不要扩成自然语言分类器。
 
