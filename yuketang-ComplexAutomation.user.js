@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      1.3.2
+// @version      1.4.0
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -44,6 +44,7 @@
       feature: "ykt_feature_conf", // 是否开启AI作答/自动评论
       pendingAutoStart: "ykt_pending_auto_start",
       failCounts: "ykt_fail_counts", // 会话级：记录反复推不动的章节及尝试次数
+      handoffKey: "ykt_handoff_key", // 目录交棒前写入本次条目的 FailGate key，供新标签回写
       panelLogs: "ykt_panel_logs",
     },
   };
@@ -359,6 +360,27 @@
     },
     exhausted(key) {
       return this.get(key) >= this.maxAttempts;
+    },
+    // AI 拒绝作答：题目无法由脚本完成，只能人工介入。交棒的新标签拿到的是目录 sessionStorage 的拷贝，
+    // 写自己那份目录看不到，所以这里直接改 window.opener 的那份（同源），由目录重扫时跳过该条目。
+    markRefused(key) {
+      if (!key) return false;
+      let target = null;
+      try {
+        target = window.opener ? window.opener.sessionStorage : null;
+      } catch (err) {
+        target = null; // 跨源或窗口已关，退回本轮重试
+      }
+      if (!target) return false;
+      const map =
+        Utils.safeJSONParse(target.getItem(Config.storageKeys.failCounts), {}) ||
+        {};
+      map[key] = -2;
+      target.setItem(Config.storageKeys.failCounts, JSON.stringify(map));
+      return true;
+    },
+    refused(key) {
+      return this._read()[key] === -2;
     },
     // 主动跳过（考试/未知类型/功能关闭）：用哨兵值标记，与"失败耗尽"区分，扫描时静默略过、不告警
     skip(key) {
@@ -2592,7 +2614,7 @@
         "",
         "## 任务背景与洞察",
         "",
-        "由于截图可能包含中文、英文、公式、配图、图片题干、图片选项以及字体混淆，你必须完全以截图中的**视觉内容**为依据，绝不可依赖用户可能附带的任何复制文本，也不得进行任何脱离截图内容的幻觉推理。",
+        "由于截图可能包含中文、英文、公式、配图、图片题干、图片选项以及字体混淆，你必须完全以截图中的**视觉内容**为依据，绝不可依赖用户可能附带的任何复制文本，也不得进行任何脱离截图内容的幻觉推理。当你认为无法作答（题目明显乱码/错误，或要求你没有能力完成的任务）时，**必须如实返回 refuse 结果**。",
         "",
         "## 工作流与映射规则",
         "",
@@ -2607,7 +2629,9 @@
         "## 输出约束",
         "",
         "- **格式要求**：只输出一个纯 JSON 对象，**绝对禁止**使用 Markdown 格式，**禁止**输出 ```json 这样的代码块，**禁止**包含任何前言、后语或解释。",
-        '- **JSON Schema**：{"type":"choice|multiple|truefalse|fillblank","answers":["A"]}',
+        "- **JSON Schema**：",
+        '  {"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}',
+        "  - type = refuse 时不输出 answers",
         "- **字段限制**：`answers` 数组中仅包含纯粹的答案值，不得包含题号、解析说明。",
         "- **基调与风格**：直接、精确、保守；不解释，不展示推理过程。",
         "- 如果模型或服务端支持 reasoning / thinking 字段，可以在该字段内部推理；最终 content 仍必须只包含 JSON 对象。",
@@ -2620,7 +2644,7 @@
         "",
         "### RESPONSE 1",
         "",
-        "CoT Reasoning: 根据计算，正确答案为 15",
+        "CoT Reasoning: 根据计算，正确答案为 15, 对应选项 C",
         'Formal Response: {"type":"choice","answers":["C"]}',
         "",
         "## 示例 2",
@@ -2644,6 +2668,39 @@
         "",
         "CoT Reasoning: 根据截图进行推理，答案应该分别是“苹果”和“重力”",
         'Formal Response: {"type":"fillblank","answers":["苹果","重力"]}',
+        "",
+        "## 示例 4",
+        "",
+        "### REQUEST 4",
+        "",
+        "User Input: [截图，有明显乱码]",
+        "",
+        "### RESPONSE 4",
+        "",
+        "CoT Reasoning: 根据截图无法识别具体题目，无法作答，应该如实拒绝",
+        'Formal Response: {"type":"refuse"}',
+        "",
+        "## 示例 5",
+        "",
+        "### REQUEST 5",
+        "",
+        "User Input: [截图，要求访问某个链接再作答，题型是填空题]",
+        "",
+        "### RESPONSE 5",
+        "",
+        "CoT Reasoning: 根据截图要求尝试访问链接，尝试调用网络工具。链接是一个问卷网站，带有题目，现在进行答题",
+        'Formal Response: {"type":"fillblank","answers":["67"]}',
+        "",
+        "## 示例 6",
+        "",
+        "### REQUEST 6",
+        "",
+        "User Input: [截图，要求访问某个链接或下载某个文件并查看后再作答]",
+        "",
+        "### RESPONSE 6",
+        "",
+        "CoT Reasoning: 根据截图要求尝试访问链接，尝试调用网络工具。失败，确认当前环境无联网能力，无法完成题目要求，无法作答，如实返回 refuse",
+        'Formal Response: {"type":"refuse"}',
       ].join("\n");
       return { system };
     },
@@ -3319,16 +3376,12 @@
       throw new NavigationStop();
     }
 
-    async waitForMediaElement(selector, timeout = 45000) {
-      await Utils.poll(() => Boolean(document.querySelector(selector)), {
-        interval: 500,
-        timeout,
-      });
-      return document.querySelector(selector);
-    }
     // 点击一个内容条目：站点会新开标签/新页处理该知识点。目录标签只点击一次并计数（FailGate 兜底防死循环），
     // 随后交棒：不在本目录文档找媒体，也不重载目录。新标签处理完经 returnToSource 把目录重载后 V2Runner 重扫继续。
     async openContentEntry(entry, failKey = "") {
+      // 交棒前记下本次条目的 key：新标签会继承一份 sessionStorage 拷贝，遇到 AI 拒绝作答时用它回写本目录
+      if (failKey)
+        sessionStorage.setItem(Config.storageKeys.handoffKey, failKey);
       entry.click();
       await Utils.sleep(800);
       if (failKey) FailGate.bump(failKey);
@@ -3581,93 +3634,6 @@
       return lastLength > previousLength;
     }
 
-    async handleVideo(course, failKey = "") {
-      course.click();
-      await Utils.sleep(3000);
-      const progressNode = document
-        .querySelector(".progress-wrap")
-        ?.querySelector(".text");
-      const title = document.querySelector(".title")?.innerText || "视频";
-      const isDeadline = document
-        .querySelector(".box")
-        ?.innerText.includes("已过考核截止时间");
-      if (isDeadline) {
-        this.panel.log(
-          `${title} 已过截止，进度不再增加，将直接跳过`,
-          "warning",
-        );
-        if (failKey) FailGate.skip(failKey);
-        return true;
-      }
-      const result = await this.playCurrentVideoUntilProgressDone(
-        title,
-        progressNode,
-        { interval: 5000 },
-      );
-      if (result.progressDone) {
-        this.panel.log(`${title} 播放完成`);
-        return true;
-      }
-      if (result.reachedEnd) {
-        this.panel.log(
-          `${title} 已播放到结尾，但目录进度尚未确认，返回目录后复查`,
-          "warning",
-        );
-      } else {
-        this.panel.log(`${title} 播放完成度未达 100%`, "warning");
-      }
-      return false;
-    }
-
-    async playCurrentVideoUntilProgressDone(
-      title,
-      progressNode,
-      { interval = 3000 } = {},
-    ) {
-      const video = await this.waitForMediaElement("video");
-      if (!video) {
-        this.panel.log(`${title} 未找到视频元素，停止当前轮次`, "warning");
-        return { progressDone: false, reachedEnd: false };
-      }
-      Player.applySpeed();
-      Player.mute(video);
-      this.panel.log(`${title} 从头开始播放`);
-      await Player.playFromStart(video);
-      const replayStartTime = Number(video.currentTime || 0);
-      await Player.startPlayback(video);
-      const stopObserve = Player.observePause(video);
-      const replayReachedEnd = () => {
-        if (!video) return false;
-        const currentTime = Number(video.currentTime || 0);
-        const duration = Number(video.duration || 0);
-        const minDelta =
-          Number.isFinite(duration) && duration > 0
-            ? Math.min(3, duration * 0.8)
-            : 3;
-        const playedDelta = Math.max(0, currentTime - replayStartTime);
-        if (playedDelta < minDelta) return false;
-        if (video.ended) return true;
-        return Player.isNearEnd(video);
-      };
-      await Utils.poll(
-        () =>
-          Utils.isProgressDone(progressNode?.innerHTML) || replayReachedEnd(),
-        { interval, timeout: await Utils.getDDL(video) },
-      );
-      stopObserve();
-      const reachedEnd = replayReachedEnd();
-      if (reachedEnd && !Utils.isProgressDone(progressNode?.innerHTML)) {
-        await Utils.poll(() => Utils.isProgressDone(progressNode?.innerHTML), {
-          interval: 1000,
-          timeout: 5000,
-        });
-      }
-      return {
-        progressDone: Utils.isProgressDone(progressNode?.innerHTML),
-        reachedEnd,
-      };
-    }
-
     async handleBatch(listNode, parentFailKey = "") {
       const section = listNode
         .querySelector(".content-box")
@@ -3730,6 +3696,13 @@
         if (statusState === "completed") continue;
         const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
         if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
+        if (FailGate.refused(subKey)) {
+          this.panel.log(
+            `${title}：AI 拒绝作答，已跳过（请人工处理）`,
+            "warning",
+          );
+          continue;
+        }
         if (FailGate.exhausted(subKey)) {
           this.panel.log(
             `${title} 连续 ${FailGate.maxAttempts} 轮未推进，跳过`,
@@ -3781,366 +3754,6 @@
         `批量区「${batchTitle}」无可处理子项，继续扫描下一项`,
         "warning",
       );
-      return true;
-    }
-
-    async playAudioItem(item, title) {
-      this.panel.log(`开始播放音频：${title}`);
-      item.click();
-      await Utils.sleep(2500);
-      const audio = await this.waitForMediaElement("audio");
-      if (!audio) {
-        this.panel.log(`${title} 未找到音频元素，停止当前轮次`, "warning");
-        return false;
-      }
-      Player.applyMediaDefault(audio);
-      const progressNode = document
-        .querySelector(".progress-wrap")
-        ?.querySelector(".text");
-      const ok = await Utils.poll(
-        () => Utils.isProgressDone(progressNode?.innerHTML),
-        { interval: 3000, timeout: await Utils.getDDL(audio) },
-      );
-      if (ok) this.panel.log(`${title} 播放完成`);
-      else this.panel.log(`${title} 播放完成度未达 100%`, "warning");
-      return ok;
-    }
-
-    async playVideoItem(item, title) {
-      this.panel.log(`开始播放视频：${title}`);
-      item.click();
-      await Utils.sleep(2500);
-      const progressNode = document
-        .querySelector(".progress-wrap")
-        ?.querySelector(".text");
-      const result = await this.playCurrentVideoUntilProgressDone(
-        title,
-        progressNode,
-      );
-      if (result.progressDone) {
-        this.panel.log(`${title} 播放完成`);
-        return true;
-      }
-      if (result.reachedEnd) {
-        this.panel.log(
-          `${title} 已播放到结尾，但目录进度尚未确认，返回目录后复查`,
-          "warning",
-        );
-      } else {
-        this.panel.log(`${title} 播放完成度未达 100%`, "warning");
-      }
-      return false;
-    }
-
-    async autoCommentItem(item, typeText) {
-      this.panel.log(
-        `开始处理${typeText}：${item.querySelector("h2")?.innerText || ""}`,
-      );
-      item.click();
-      await Utils.sleep(1200);
-
-      // 检查是否开启自动评论功能
-      const featureFlags = Store.getFeatureConf();
-      if (!featureFlags.autoComment) {
-        this.panel.log(`${typeText}已查看，但未开启自动回复功能`, "warning");
-        return true;
-      }
-
-      // 开启了自动评论功能，执行评论逻辑
-      window.scrollTo(0, document.body.scrollHeight);
-      await Utils.sleep(800);
-      window.scrollTo(0, 0);
-      const commentSelectors = [
-        "#new_discuss .new_discuss_list .cont_detail",
-        ".new_discuss_list dd .cont_detail",
-        ".cont_detail.word-break",
-      ];
-      let firstComment = "";
-      for (let retry = 0; retry < 30 && !firstComment; retry++) {
-        for (const sel of commentSelectors) {
-          const list = document.querySelectorAll(sel);
-          for (const node of list) {
-            if (node?.innerText?.trim()) {
-              firstComment = node.innerText.trim();
-              break;
-            }
-          }
-          if (firstComment) break;
-        }
-        if (!firstComment) await Utils.sleep(500);
-      }
-      if (!firstComment) {
-        this.panel.log("未找到评论内容，跳过该项", "warning");
-      } else {
-        const input = document.querySelector(".el-textarea__inner");
-        if (input) {
-          input.value = firstComment;
-          input.dispatchEvent(new Event("input", { bubbles: true }));
-          input.dispatchEvent(new Event("change", { bubbles: true }));
-          await Utils.sleep(800);
-          const sendBtn =
-            document.querySelector(".el-button.submitComment") ||
-            document.querySelector(".publish_discuss .postBtn button") ||
-            document.querySelector(".el-button--primary");
-          if (
-            sendBtn &&
-            !sendBtn.disabled &&
-            !sendBtn.classList.contains("is-disabled")
-          ) {
-            sendBtn.click();
-            this.panel.log(`已在${typeText}区发表评论`);
-          } else {
-            this.panel.log("发送按钮不可用或不存在", "warning");
-          }
-        } else {
-          this.panel.log("未找到评论输入框，跳过", "warning");
-        }
-      }
-      return true;
-    }
-
-    async handleHomework(item, failKey = "") {
-      const featureFlags = Store.getFeatureConf();
-      if (!featureFlags.autoAI) {
-        this.panel.log("已关闭AI自动答题，跳过该项", "warning");
-        if (failKey) FailGate.skip(failKey); // 防御性：正常路径已在扫描阶段跳过作业，不会进到这里
-        return true;
-      }
-      this.panel.log("进入作业，启动截图 + 多模态 AI");
-      item.click();
-      await Utils.poll(
-        () => {
-          const exerciseDoc = AiWorkspace.getExerciseDocument() || document;
-          return (
-            Boolean(AiWorkspace.getExerciseContainer()) ||
-            AiWorkspace.getExerciseQuestionTabs(exerciseDoc).length > 0 ||
-            exerciseDoc.querySelector(
-              ".item-type, .item-body, .container-problem",
-            )
-          );
-        },
-        { interval: 500, timeout: 12000 },
-      );
-      let i = 0;
-      const maxRetry = Config.aiMaxRetry; // 最大重试次数
-      while (true) {
-        const exerciseDoc = AiWorkspace.getExerciseDocument() || document;
-        const container =
-          AiWorkspace.getExerciseContainer() ||
-          exerciseDoc.querySelector(".container-problem") ||
-          exerciseDoc;
-        const items = AiWorkspace.getExerciseQuestionTabs(exerciseDoc);
-        const problems = AiWorkspace.getExerciseProblems(container);
-        if (!items.length) {
-          this.panel.log(
-            "未找到题号列表，尝试按当前题和下一题按钮推进",
-            "warning",
-          );
-          let touchedQuestion = false;
-          let previousFingerprint = "";
-          for (let fallbackIndex = 0; fallbackIndex < 50; fallbackIndex++) {
-            const latestDoc = AiWorkspace.getExerciseDocument() || document;
-            const latestContainer =
-              AiWorkspace.getExerciseContainer() ||
-              latestDoc.querySelector(".container-problem") ||
-              latestDoc;
-            const currentQuestion =
-              AiWorkspace.getExerciseQuestionBody(latestContainer);
-            const fingerprint = AiWorkspace.normalizeText(
-              currentQuestion?.innerText || "",
-            ).slice(0, 120);
-            if (
-              !currentQuestion ||
-              !fingerprint ||
-              (fallbackIndex > 0 && fingerprint === previousFingerprint)
-            )
-              break;
-            touchedQuestion = true;
-            if (!AiWorkspace.isExerciseAnswered(currentQuestion)) {
-              const questionType = Solver.detectQuestionType(currentQuestion);
-              let optionCount = 0;
-              if (questionType !== "fillblank") {
-                optionCount = Solver.getVisibleOptionCount(currentQuestion);
-                if (!optionCount) {
-                  this.panel.log(
-                    `当前题未找到选项，停止无题号 fallback`,
-                    "warning",
-                  );
-                  break;
-                }
-              }
-              const imageDataUrl =
-                await Solver.captureQuestionImage(currentQuestion);
-              panel.log("请求多模态 AI 获取答案...");
-              const aiText = await Solver.askAI(
-                imageDataUrl,
-                optionCount,
-                questionType,
-              );
-              await Solver.autoSelectAndSubmit(aiText, currentQuestion);
-              await Utils.sleep(1500);
-            }
-            previousFingerprint = fingerprint;
-            const nextBtn = AiWorkspace.getExerciseActionButton(
-              latestDoc,
-              /下一题|下一道|下一步/,
-            );
-            if (!nextBtn) break;
-            nextBtn.click();
-            const moved = await Utils.poll(
-              () => {
-                const movedDoc = AiWorkspace.getExerciseDocument() || document;
-                const movedContainer =
-                  AiWorkspace.getExerciseContainer() ||
-                  movedDoc.querySelector(".container-problem") ||
-                  movedDoc;
-                const nextQuestion =
-                  AiWorkspace.getExerciseQuestionBody(movedContainer);
-                const nextFingerprint = AiWorkspace.normalizeText(
-                  nextQuestion?.innerText || "",
-                ).slice(0, 120);
-                return nextFingerprint && nextFingerprint !== fingerprint;
-              },
-              { interval: 500, timeout: 5000 },
-            );
-            if (!moved) break;
-          }
-          if (!touchedQuestion) {
-            this.panel.log(
-              "未找到题号列表或题目内容，跳过该作业以避免重载循环",
-              "warning",
-            );
-            if (failKey) FailGate.skip(failKey);
-          }
-          break;
-        }
-        if (i >= items.length) {
-          this.panel.log(`所有题目处理完毕，共 ${items.length} 题，准备交卷`);
-          break;
-        }
-        const listItem = items[i];
-        if (
-          AiWorkspace.isProblemSubmitted(problems[i]) ||
-          AiWorkspace.isExerciseTabAnswered(listItem)
-        ) {
-          this.panel.log(`第 ${i + 1} 题已提交，跳过...`, "warning");
-          i++;
-          continue;
-        }
-        listItem.scrollIntoView({ behavior: "smooth", block: "center" });
-        listItem.click();
-        await Utils.sleep(2200);
-
-        const targetEl =
-          document.querySelector(".item-type")?.parentElement ||
-          document.querySelector(".item-body") ||
-          document.querySelector(".container-problem");
-
-        // 判断本题是否已完成：看当前题面或题号标签上的状态
-        const isAnswered =
-          AiWorkspace.isExerciseAnswered(targetEl) ||
-          AiWorkspace.isProblemSubmitted(problems[i]) ||
-          AiWorkspace.isExerciseTabAnswered(listItem) ||
-          listItem.className?.includes("done") ||
-          listItem.className?.includes("completed") ||
-          listItem.className?.includes("correct") ||
-          listItem.className?.includes("finished") ||
-          /已完成|已作答|已提交|回答正确|回答错误|对|✓|✔/.test(
-            listItem.innerText || "",
-          );
-
-        if (isAnswered) {
-          this.panel.log(`第 ${i + 1} 题已完成，跳过...`, "warning");
-          i++;
-          continue;
-        }
-        const questionType = Solver.detectQuestionType(targetEl);
-        let optionCount = 0;
-        if (questionType !== "fillblank") {
-          optionCount = Solver.getVisibleOptionCount(targetEl);
-          if (!optionCount) {
-            this.panel.log(`第 ${i + 1} 题未找到选项，跳过`, "warning");
-            i++;
-            continue;
-          }
-        }
-        let retryCount = 0;
-        let success = false;
-        while (retryCount < maxRetry && !success) {
-          try {
-            if (retryCount > 0) {
-              this.panel.log(
-                `第 ${i + 1} 题重试 ${retryCount}/${maxRetry}...`,
-                "warning",
-              );
-            }
-            const imageDataUrl = await Solver.captureQuestionImage(targetEl);
-            panel.log("请求多模态 AI 获取答案...");
-            const aiText = await Solver.askAI(
-              imageDataUrl,
-              optionCount,
-              questionType,
-            );
-            const result = await Solver.autoSelectAndSubmit(aiText, targetEl);
-            if (result === "refused") {
-              this.panel.log(`第 ${i + 1} 题无法作答，已跳过并继续下一题（请人工检查）`, "error");
-              break;
-            }
-            const saved = await Utils.poll(
-              () => {
-                const freshDoc = AiWorkspace.getExerciseDocument() || document;
-                const freshContainer =
-                  AiWorkspace.getExerciseContainer() ||
-                  freshDoc.querySelector(".container-problem") ||
-                  freshDoc;
-                const freshTabs = AiWorkspace.getExerciseQuestionTabs(freshDoc);
-                const freshProblems =
-                  AiWorkspace.getExerciseProblems(freshContainer);
-                return (
-                  AiWorkspace.isProblemSubmitted(freshProblems[i]) ||
-                  AiWorkspace.isExerciseTabAnswered(freshTabs[i] || listItem) ||
-                  AiWorkspace.isExerciseAnswered(targetEl)
-                );
-              },
-              { interval: 500, timeout: 5000 },
-            );
-            if (!saved)
-              this.panel.log(
-                `第 ${i + 1} 题提交状态未及时回写，继续处理后续题目`,
-                "warning",
-              );
-            success = true;
-          } catch (err) {
-            retryCount++;
-            this.panel.log(`AI 答题失败：${err}`, "error");
-            if (retryCount < maxRetry) {
-              this.panel.log(`等待 5 秒后重试...`, "warning");
-              await Utils.sleep(5000);
-            } else {
-              this.panel.log(
-                `第 ${i + 1} 题重试 ${maxRetry} 次后仍失败，跳过`,
-                "warning",
-              );
-            }
-          }
-        }
-        await Utils.sleep(1500);
-        i++;
-      }
-
-      // 尝试点击整体交卷/提交按钮
-      const submitAllBtn = AiWorkspace.getExerciseActionButton(
-        document,
-        /交卷|提交作业|提交试卷|完成作业|确认提交/,
-      );
-      if (submitAllBtn) {
-        this.panel.log("已找到交卷按钮，正在提交...");
-        submitAllBtn.click();
-        await Utils.sleep(1500);
-      } else {
-        this.panel.log("未找到整体交卷按钮，可能已经自动保存", "warning");
-      }
-
       return true;
     }
 
@@ -4901,6 +4514,14 @@
               `${label || "当前题目"} 无法作答，已跳过并继续下一题（请人工检查）`,
               "error",
             );
+            // 通知来源目录：AI 已明确拒答，本轮再交棒也不会推进，直接标记跳过
+            if (
+              FailGate.markRefused(
+                sessionStorage.getItem(Config.storageKeys.handoffKey),
+              )
+            ) {
+              this.panel.log("已通知来源目录跳过该条目，等待人工处理");
+            }
             return false;
           }
           await Utils.sleep(1200);
@@ -5164,6 +4785,13 @@
       return;
     }
     await Utils.waitForMountTarget();
+    // 交棒子标签会继承来源目录的 sessionStorage 拷贝。用掉后立刻清掉来源那份，
+    // 免得之后从目录手动打开的标签误用上一次交棒留下的 key。
+    try {
+      window.opener?.sessionStorage.removeItem(Config.storageKeys.handoffKey);
+    } catch (err) {
+      // 跨源或窗口已关，忽略
+    }
     try {
       panel = createPanel();
       panel.log(`yuketang-ComplexAutomation v${Config.version} 已加载`);

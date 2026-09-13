@@ -77,12 +77,13 @@ rg -n '@version|Config.version' yuketang-ComplexAutomation.user.js
 
 | 工作包                           |   AUDIT 项 | 状态 | 前置条件                                     |
 | -------------------------------- | ---------: | ---- | -------------------------------------------- |
-| A. 删除 V2Runner 旧内容处理簇    |       1、8 | 待办 | 可用的 V2 目录课程，完成后做交棒回归         |
+| A. 删除 V2Runner 旧内容处理簇    |       1、8 | 已完成 | 无                                           |
+| N. AI 拒答时通知来源目录跳过      | 机主实机提出 | 已改代码，待机主实机验证 | 需要一道会触发 refuse 的作业 |
 | B. 删除失效配置并修 README       | 2、3、4、7 | 待办 | 无                                           |
-| C. 同步答题 prompt               |          6 | 待办 | 可用的多模态 API 和真实题目用于 refuse 验证  |
+| C. 同步答题 prompt               |          6 | 已完成 | 无                                           |
 | D. 让`Utils.poll()` 异常收敛   |          9 | 待办 | 无                                           |
 | E. 修判断题文本回退              |         11 | 待办 | 无                                           |
-| F. 显式区分答题提交结果          |         10 | 阻塞 | 先观测提交后的 DOM 回写                      |
+| F. 显式区分答题提交结果          |         10 | 待办 | 提交回写已观测，见 `OBSERVE.md` 作业页「提交回写」一节                        |
 | G. 确认七项以上选项边界          |         12 | 阻塞 | 找到选项数 ≥ 7 的真实题目或平台约束证据     |
 | H. 修课件推进判定                |         13 | 阻塞 | 先确认课件是同页弹层还是新标签               |
 | I. 修课堂媒体等待                |         14 | 阻塞 | 先确认课堂入口、iframe、`ended` 和标签行为 |
@@ -130,6 +131,16 @@ node --check yuketang-ComplexAutomation.user.js
 4. `ykt-ff tabs` 显示标签数没有逐轮增长；
 5. `HANDOFF` 后目录没有自行调用 `returnToList()`。
 
+### 完成记录（2026-09-13）
+
+已删除七个无调用方法，`yuketang-ComplexAutomation.user.js` 净减 453 行；`node --check`、`git diff --check` 通过，`rg` 对旧符号无命中（`AGENTS.md` 同步更新）。
+
+`OBSERVE.md` 中提及 `playVideoItem`/`playAudioItem`/`autoCommentItem` 的两条旧观测保留原样：它们是带日期的实机记录，描述的是站点行为，不是当前代码。
+
+交棒回归已于同日实机执行（`ykt-ff`，班级 31317597，脚本 v1.3.2）：目录每轮只点一个未完成条目并交棒；新标签落在 ai-workspace 并处理该知识点；处理完由 `returnToSource` 把目录标签导航回目录、重扫续行；连续观察约 4 分钟，网页标签数恒为 2（目录 + 一个执行标签），无逐轮增长；目录未在 `HANDOFF` 后自我重载（FailGate 计数跨重载累计到上限后跳过该子项，正常推进到下一子项）。
+
+附带发现（不在本工作包范围，需机主决定）：`autoCommentItem` 删除后，`autoComment` 开关已没有任何发帖实现，开启时讨论子项只会空转 `maxAttempts` 轮后被跳过。
+
 ## B. 删除失效配置并修 README
 
 ### 修改范围
@@ -176,6 +187,24 @@ node --check yuketang-ComplexAutomation.user.js
 - 期望脚本记 error 日志，等待 10 秒，不选择、不提交，然后继续既定题目流程。
 - 若服务商仍不返回 refuse，只记录实际响应和模型信息，不宣称 prompt 修复无效，也不扩大解析器规则猜测意图。
 
+### 完成记录（2026-09-13）
+
+已按 `SystemPrompt.md` 的正文重新生成 `Solver.buildPrompt()`：
+
+- 背景段补回「无法作答时必须如实返回 refuse 结果」；
+- JSON Schema 改为含 `refuse`，并加「type = refuse 时不输出 answers」；
+- 补齐示例 4 / 5 / 6（机主本轮改写的新正文）；
+- 原有示例 1 的 CoT 文字与 md 对齐；
+
+方向相反的那一处，按原计划把代码里的说明补回了 md：`SystemPrompt.md` 的「输出约束」新增
+「如果模型或服务端支持 reasoning / thinking 字段，可以在该字段内部推理；最终 content 仍必须只包含 JSON 对象。」
+（机主若不需要这行，删 md 后同步删代码同位置即可）。
+
+新增最小自测 `tmp/prompt-sync-check.cjs`：断言 md 正文（`<AI识图Prompt>` 区块内）与代码 `system` 数组逐行一致，
+本次输出 `OK: 93 行 prompt 与 SystemPrompt.md 逐行一致`。改完 prompt 后跑一次即可拦住再次漂移。
+
+模型实测（真实 refuse 返回）由机主在自己的 API 与题目上做；脚本侧处理 refuse 的路径未改动。
+
 ## D. 让 `Utils.poll()` 异常收敛
 
 ### 修改范围
@@ -218,7 +247,7 @@ node --check yuketang-ComplexAutomation.user.js
 - 状态回写所需时间；
 - 单题与整份作业是否不同。
 
-把结果写入 `OBSERVE.md` 后再设计返回语义。
+前置观测已于 2026-09-13 完成，结论记在 `OBSERVE.md` 作业页的「提交回写、目录状态与跨标签会话」一节：单题提交后 `isProblemSubmitted` / `isExerciseTabAnswered` 会变真（脚本随后几轮日志里的「已提交，跳过」即由此而来），而**整份作业的目录状态是服务端异步回写**，会晚于内容页，窗口期内目录仍显示「进行中」。因此 `submitted` 的判据用现有谓词（轮询已答/已提交）是可行的，但不要用它去断言「目录已翻成完成」。
 
 ### 修改范围
 
@@ -284,6 +313,29 @@ node --check yuketang-ComplexAutomation.user.js
 
 只有在能减少当前维护成本、且不扩大交付文件数量时再做。不要为整理新增模块系统或依赖。
 
+## N. AI 拒答时通知来源目录跳过（机主实机提出）
+
+### 背景
+
+实机观察：交棒进作业页后 AI 对某题返回 `refuse`，脚本按设计只跳过该题（不选、不提交、继续下一题）。
+该作业因此不可能被脚本刷完，但目录侧看不到这一点，重扫时仍把「进行中」当作遗漏，继续交棒，同一份作业被重复进入 3 轮（FailGate 满 `maxAttempts`）才跳过。
+
+### 修改范围
+
+- `Config.storageKeys.handoffKey`：新增 `ykt_handoff_key`。
+- `V2Runner.openContentEntry()`：点击前把本次条目的 FailGate key 写入 sessionStorage，供子标签继承。
+- `FailGate.markRefused(key)` / `refused(key)`：哨兵 `-2`（与 `skip` 的 `-1`、失败计数的正数区分）。
+  子标签经 `window.opener.sessionStorage` 回写来源目录（sessionStorage 是拷贝，写自己那份目录读不到）。
+- `AiWorkspaceRunner.solveExerciseQuestion()`：refuse 分支调用 `markRefused`，并记一条「已通知来源目录」日志。
+- `V2Runner.handleBatch()`：扫描时对 `refused` 的子项打 warning 并跳过。
+- `boot()`：子标签启动即清掉来源目录那份 `ykt_handoff_key`，避免之后从目录手动打开的标签误用上一个 key。
+
+### 验证（机主实机）
+
+1. 目录页启动，交棒进一道**会触发 refuse** 的作业；子标签日志出现「无法作答，已跳过并继续下一题」与「已通知来源目录跳过该条目」。
+2. 子标签返回目录后，目录**同一轮**即打「`{标题}：AI 拒绝作答，已跳过（请人工处理）」并推进到下一子项，而不是再进同一作业 3 轮。
+3. 反例：用户直接在本页启动（无 opener）时，refuse 只跳过当前题目，目录行为保持原样。
+
 ## 回归清单
 
 涉及 V2、ai-workspace、Player、FailGate 或答题流程时，按改动范围选择检查：
@@ -297,7 +349,7 @@ node --check yuketang-ComplexAutomation.user.js
 - ai-workspace 未知路由仍跳过并继续 `autoSelect()`。
 - 媒体继续通过 `Player.prepareMedia()` 执行“真实静音后冻结”，`findPlayButton()` 不重新包含提示或音量图标。
 - iframe 中仍启动 `Decipherer`，截图 `onclone` 仍使用显式 CJK 字体并跳过 MathJax/KaTeX。
-- AI refuse 仍不选、不提交，记录 error 并等待 10 秒。
+- AI refuse 仍不选、不提交，记录 error 并等待 10 秒；随后经 `window.opener.sessionStorage` 把来源目录里该条目标成 `-2`（目录重扫时跳过，见工作包 N）。
 
 ## 完成维护
 

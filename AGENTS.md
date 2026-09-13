@@ -116,7 +116,7 @@ V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 3. 就地跳过有意不进入的条目（考试、未知类型、被禁用的顶层作业等）。这些条目不得调用 `returnToList()` 或点击目录项。
 4. 选取第一个满足「`getCompletionState(...)` 不是 `completed`，且 FailGate key 既未跳过也未耗尽」的条目。
 5. 分发一个 handler：
-   - 内容条目（视频 / 顶层作业）：`openContentEntry(course, failKey)` —— 点击目录项后站点**新开标签**（焦点跟随、目录标签原地不动、新标签落在 ai-workspace 路由、`window.opener` 指回目录）处理该知识点。目录标签只点一次、`FailGate.bump` 一次，然后返回特殊值 `HANDOFF`。
+   - 内容条目（视频 / 顶层作业）：`openContentEntry(course, failKey)` —— 先把 `failKey` 写进 `sessionStorage`（`ykt_handoff_key`，供子标签回写用），再点击目录项；站点**新开标签**（焦点跟随、目录标签原地不动、新标签落在 ai-workspace 路由、`window.opener` 指回目录）处理该知识点。目录标签只点一次、`FailGate.bump` 一次，然后返回特殊值 `HANDOFF`。
    - 批次：`handleBatch` 就地展开（站点在目录内发 XHR 渲染子项，不新开标签），定位第一个未完成子项后同样 `openContentEntry(item, subKey)` 交棒（重置父 key、bump 子 key）。
    - 课堂 / 课件概况（`handleClassroom` / `handleCourseware`）：仍是同页 iframe / 弹层内联处理（未实测确认这类会不会也新开标签，保留原路径）。
 6. `run()` 收到 `HANDOFF` 时**直接 return，不调用 `returnToList()` 也不重载目录**——重载会再次点击又开一个新标签（旧死循环根因）。
@@ -131,7 +131,7 @@ V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 
 V2 条目进入有意保持 KISS：目录只负责「点一个未完成条目 → 交棒 → 停手」，实际的媒体播放 / 答题在被打开的新标签里由 `AiWorkspaceRunner` 完成，再回到目录重扫。**不要改回「点击后在当前目录文档里找 `video` / 作业元素并就地处理」**——站点点击目录项会新开标签，目录文档里没有这些元素，旧做法正是「未找到元素 → 重载 → 再点 → 标签无限增长」死循环的根因。也不要为交棒加基于 focus / visibility 的停止逻辑；目录只认 `HANDOFF` 这一种信号。
 
-交棒重构前的那套同文档实现**仍以死代码形式留在 `V2Runner` 里**：`handleVideo`、`playCurrentVideoUntilProgressDone`、`playAudioItem`、`playVideoItem`、`autoCommentItem`、`handleHomework`、`waitForMediaElement`，全仓库没有任何调用点。它们不代表当前行为——不要照抄其中任何一个去恢复就地处理，也不要因为看到它们而以为交棒只在部分路径生效。清理建议见 `AUDIT.md` 第 1 条。
+`V2Runner` 不持有任何媒体播放或答题实现：只做目录扫描、`openContentEntry` / `handleBatch` 交棒，以及课堂 / 课件概况两条内联路径。媒体播放与答题都在交棒后的新标签（`AiWorkspaceRunner`）里。
 
 V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceRunner.handleMedia` 负责起播与刷到完成，进度以重载后目录 DOM 的服务器端状态为准。
 交棒的可靠性：目录交棒后不再自我重载，完全依赖新标签的 `returnToSource` 把目录重载。因此 `AiWorkspaceRunner.run()` 用 try/catch 兜住知识点处理，任何抛错都要继续走到 `autoSelect()`，否则目录会永久停等。FailGate 在目录侧 `openContentEntry` 里 bump，跨「子标签回目录重载」的多次尝试累计，满 `maxAttempts` 后跳过该项；新标签自身不持有跨重载的闸门（其 `_lastAdvanceIndex` 只在直接在本页启动逐项刷时生效）。
@@ -178,6 +178,7 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - `exhausted(key)` 在 `maxAttempts` 次后跳过。
 - `skip(key)` 标记有意跳过（考试、未知类型、被禁用的作业）。
 - `skipped(key)` 检查有意跳过状态。
+- `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。目录扫描跳过并打 warning。
 - `reset(key)` 在条目或批次子项有进展时清零计数。
 - `clear()` 与 `Store.clearPendingAutoStart()` 一起接到面板的清除失败动作上。
 
@@ -258,7 +259,9 @@ API 行为：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
 
-`type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 记 **error** 日志、提示需要人工介入、**暂停 10 秒**后返回 `"refused"`，且**不选选项、不点提交**；调用方据此跳过该题并继续下一题（`solveExerciseQuestion` 返回 false，有题号列表的循环 `break`）。
+`type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 记 **error** 日志、提示需要人工介入、**暂停 10 秒**后返回 `"refused"`，且**不选选项、不点提交**；调用方据此跳过该题并继续下一题（`solveExerciseQuestion` 返回 false）。
+
+`solveExerciseQuestion` 的 refuse 分支还会调用 `FailGate.markRefused(...)`，把来源目录里本次交棒条目的 key 标成 `-2`：这一题既然脚本答不了，那份作业就不可能靠脚本刷完，目录重扫时应当直接跳过，而不是再交棒重试到 FailGate 满 3 次。key 由目录在交棒前写入 `sessionStorage`（`ykt_handoff_key`），子标签继承的是拷贝，因此回写目标是 `window.opener.sessionStorage`；拿不到 opener（用户直接在本页启动、窗口已关）时静默退回原来的重试行为。
 
 ## 编辑规则
 
@@ -286,10 +289,11 @@ API 行为：
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
 - 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
 - `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
-- 讨论（`taolun`/`forum`）子项只在 `autoComment === false` 时才在 `handleBatch` 里就地 `FailGate.skip`（v1.2.3 起，避免「交棒→新标签不处理→关标签→再交棒」空转）；**开启**自动评论时仍会交棒进论坛页，而新标签的 `AiWorkspaceRunner` 不处理评论类型 → 空转 `maxAttempts` 轮后被 `FailGate` 跳过、条目永不完成。要恢复须在新标签侧接住评论类型并发帖，否则应移除该开关与已无调用点的 `autoCommentItem`。
+- 讨论（`taolun`/`forum`）子项只在 `autoComment === false` 时才在 `handleBatch` 里就地 `FailGate.skip`（v1.2.3 起，避免「交棒→新标签不处理→关标签→再交棒」空转）；**开启**自动评论时仍会交棒进论坛页，而新标签的 `AiWorkspaceRunner` 不处理评论类型 → 空转 `maxAttempts` 轮后被 `FailGate` 跳过、条目永不完成。v1.4.0 起脚本已无发帖实现（`autoCommentItem` 随死代码删除），这个开关现在唯一的效果就是让讨论子项空转；要么在新标签侧接住评论类型并发帖，要么移除该开关与面板勾选框。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
 - `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 在既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `AUDIT.md` 第 13 条）。
 - `html2canvas` 截图把中文渲染成错字，根因是页面加载的混淆字体（DOM 文本被该字体做了字形置换），不是截图代码或图片本身；修复靠 `Decipherer` 先把 DOM 还原为真实中文，再在截图 `onclone` 里换掉字体栈。只改 `@font-face` 不管用。
 - 题目（exercise）跑在 `#iframeExerciseId` iframe（`/v2/web/iframe-exercise/…`）内，主文档既没有题目 DOM 也没有混淆字体；若在 iframe 分支直接 `return`，`Decipherer` 不会在 iframe 内运行，反混淆失效（DOM 仍是错字，复制与截图都不对）。反混淆必须在 iframe 分支里先启动。
 - 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
 - `Utils.poll()` 的 checker 抛异常时 Promise **永不落定**：超时判定与 `clearInterval` 都在 checker 之后，`setInterval` 回调抛出后不会再走到。写 checker 时避免访问可能已卸载节点的属性，或等内容层加上 try/catch（见 `AUDIT.md` 第 9 条）。
+- 交棒子标签拿到的是来源目录 sessionStorage 的**拷贝**：子标签自己写 `ykt_fail_counts`，目录读不到（实测同一 key 两边计数不同）。跨标签回写只能写 `window.opener.sessionStorage`，且 `openContentEntry` 必须在点击**之前**写好 `ykt_handoff_key`，因为拷贝是在新标签创建那一刻生成的。
