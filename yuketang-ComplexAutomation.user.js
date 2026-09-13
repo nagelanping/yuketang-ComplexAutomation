@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.1.1
+// @version      2.1.2
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2224,10 +2224,13 @@
     keepLineBreaks(text = "") {
       return String(text || "").replace(/\r\n?/g, "\n").trim();
     },
-    // 模型可能包一层代码块或引号、写个「回复：」前缀；清成可以直接发表的一段文本
+    // 模型可能包一层代码块或引号、写个「回复：」前缀，或照抄 prompt 示范里的
+    // 「CoT Reasoning: … / Formal Response: …」两行；清成可以直接发表的一段文本
     normalizeForumReply(raw = "") {
       let text = this.keepLineBreaks(raw);
       text = text.replace(/^```[a-z]*\s*/i, "").replace(/\n?```$/, "");
+      const formal = text.match(/Formal\s*Response\s*[:：]\s*([\s\S]*)$/i);
+      if (formal) text = formal[1]; // 只发 Formal Response 后面的正文，推理过程不该进讨论区
       text = text.replace(/^(回复|答复|回答)\s*[:：]\s*/, "");
       if (/^["“'「]([\s\S]*)["”'」]$/.test(text)) text = text.slice(1, -1);
       return this.keepLineBreaks(text);
@@ -2968,6 +2971,34 @@
         "- 禁止二元纠正形式，如“不是X，而是Y”。",
         "- 禁止填充过渡语，如“首先”“其次”“最后”“总而言之”“众所周知”。",
         "- 不使用 em dash 或装饰性破折号。",
+        "",
+        "## 场景情况",
+        "",
+        "- 如果遇到要求访问链接时，尝试使用网络工具查看链接中内容",
+        "- 当被要求前往其他网页完成填写时，仅查看网页内容，然后只回复需要回复的内容",
+        "- **当被要求提交附件时，或被要求超出能力的事时，拒绝回答，返回{refuse}**",
+        "",
+        "## 示范 1",
+        "",
+        "### REQUEST 1",
+        "",
+        "User Input: 请完成问卷 https:占位.aspx 并写出您的五项优势（无需提交附件）",
+        "",
+        "### RESPONSE 1",
+        "",
+        "CoT Reasoning: 我不需要完成问卷，我只需要“写出您的五项优势”。现在我尝试查看链接中的内容，以观察它是否和要求回答的内容有关。尝试调用网络工具访问。我将直接回答我的五项优势。注意回答中不要使用表情符号和 markdown 语法，我应该使用纯文本输出。",
+        "Formal Response: 好学：我乐于接触新知识，遇到不懂的问题会主动查阅、学习。洞察力：我能从不同角度看待问题，抓住事情的关键。坚韧：面对困难时我不轻易放弃，会持续尝试直到找到解决办法。善良：我愿意帮助他人，关心身边人的感受和需要。感恩：我常记得别人对我的帮助，并愿意表达感谢和回报。",
+        "",
+        "## 示范 2",
+        "",
+        "### REQUEST 2",
+        "",
+        "User Input: 请查看文件 https:占位.docx ，在讨论区中提交附件",
+        "",
+        "### RESPONSE 2",
+        "",
+        "CoT Reasoning: 我被要求完成文档并提交附件，但当前我无法完成提交操作。我应该如实拒绝回答，并返回{refuse}。",
+        "Formal Response: {refuse}",
       ].join("\n");
       return { system };
     },
@@ -3531,6 +3562,20 @@
         raw,
       };
     },
+    // 讨论区的拒答判定：prompt 约定「做不到的事 → 返回 {refuse}」，示范里写成
+    // 「CoT Reasoning: …  Formal Response: {refuse}」两行。这里只认标记本身，不做语义判断：
+    // 去掉代码块围栏/空白/引号后，整段正好是 {refuse}（或 refuse、{"type":"refuse"}）才算拒答；
+    // 正文里顺带提到 refuse 的正常回答不会被误判。作业那条路是 JSON 里的 {"type":"refuse"}（parseAIAnswer 归一）。
+    isRefuseReply(raw = "") {
+      let text = String(raw || "")
+        .replace(/```[a-z]*/gi, "")
+        .replace(/[\s"'“”‘’「」]/g, "")
+        .toLowerCase();
+      const formal = text.match(/formalresponse:?(.*)$/);
+      if (formal) text = formal[1];
+      return /^\{?refuse\}?$/.test(text) || /type:refuse/.test(text);
+    },
+
 
     answerToIndices(parsed, optionCount) {
       const answers = parsed.answers || [];
@@ -5202,11 +5247,12 @@
         this.panel.log("模型没给出可用的回复正文，本轮记未推进", "warning");
         return false;
       }
-      // 模型按 prompt 约定拒答时不能把「refuse」当正文发出去；和作业一样标成拒答，交给目录侧跳过
-      if (/^refuse$/i.test(reply)) {
+      // 模型按 prompt 约定拒答时不能把「{refuse}」当正文发出去；和作业一样标成拒答，交给目录侧跳过。
+      // 判据在 raw 上做：清成回复正文的过程会剥掉引号，标记本身得按模型原样识别。
+      if (Solver.isRefuseReply(raw)) {
         FailGate.markRefused(sessionStorage.getItem(Config.storageKeys.handoffKey));
         this.panel.log(
-          "AI 判定无法作答该讨论，已跳过并标记为需人工处理",
+          "AI 判定无法作答该讨论（要求超出能力，如提交附件/访问外部页面），已跳过并标记为需人工处理",
           "error",
         );
         return false;

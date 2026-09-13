@@ -254,3 +254,13 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - 根因：`V2Runner.getCompletionState()` 只认「已完成/已读」→ 讨论全被当未开始 → 已发言那条每轮都交棒，`handleForum` 见「已发言」返回 true → `markProgress` 清掉失败计数 → 重扫再选中，反复开标签且永远到不了 `maxAttempts`。
 - 修：`getCompletionState()` 与 `Utils.isProgressDone()` 都加「已发言 / 已回复」算 completed；`handleForum` 的「已发言」护栏改用 `Utils.isProgressDone()`，两处口径仍旧一处、同一处改。
 - 新增 `tmp/completion-state-selftest.cjs`（14 例：分数/百分比/文字优先级 + 已发言/未发言）。`OBSERVE.md`、`AGENTS.md` 同步。
+
+## 2026-09-13 讨论区拒答 {refuse}：prompt 同步与判定（@version 2.1.2）
+
+机主改了 `SysPmt_Discussion`：新增「场景情况」（要求访问链接时尝试查看；要求去别的网页填写时只看内容再回复；**要求提交附件或超出能力时返回 `{refuse}`**）+ 两条示范（问卷链接→正常作答；要求提交附件→`{refuse}`）。
+
+- `buildForumPrompt()` 按标记重新同步（34 → 62 行，`tmp/prompt-sync-check.cjs` 两项都过）。
+- 新增 `Solver.isRefuseReply(raw)`：去围栏/空白/引号后整段是 `{refuse}`（或 `refuse`、`{"type":"refuse"}`）才算拒答；带「CoT Reasoning / Formal Response」两行时只看 Formal Response 那段。只认标记不做语义判断，正文里提到 refuse 不误判。
+- `handleForum()` 的拒答分支从 `/^refuse$/` 换成 `Solver.isRefuseReply(raw)`（判 raw，不判清洗后的正文），日志写明原因，`FailGate.markRefused` 标记需人工处理——与作业 refuse 同思路。
+- `normalizeForumReply()` 现在会把「Formal Response:」前面的推理行去掉，只发正文。
+- `tmp/forum-selftest.cjs` 增拒答用例（6 正 4 负）与 Formal Response 用例。

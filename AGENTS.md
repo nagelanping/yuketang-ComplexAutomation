@@ -73,7 +73,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - 题目文档与 iframe 跨越：
   `getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId`
 - 讨论区回复：
-  `isForumRouteType|handleForum|getForumBodyText|getForumReplyBox|getForumSendButton|fillForumReplyBox|normalizeForumReply|buildForumPrompt`
+  `isForumRouteType|handleForum|getForumBodyText|getForumReplyBox|getForumSendButton|fillForumReplyBox|normalizeForumReply|buildForumPrompt|isRefuseReply`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
@@ -122,7 +122,7 @@ UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单
 2. 页面状态已是「已发言」→ 直接返回 `true`，不再发（服务端状态只在页面加载时更新，见下条）。
 3. 读教师正文 `AiWorkspace.getForumBodyText()`（`.main-text-attachment`）。**只喂任务要求本身，不喂别人的帖子**：机主实机看过，示范帖多是「1.周末回家2.吃了水果」这种一行流水，喂进去会把模型往低质量格式上带。
 4. `Solver.askAI(null, { systemPrompt: Solver.buildForumPrompt().system, userText })` —— **纯文本进纯文本出**。该页 `[class*=encrypted]` 命中 0、样式里没有 `exam_font_`，不存在作业页那种「复制得到错字」的字体混淆，截图只会多一次 OCR 和一轮 html2canvas 的坑。
-5. `AiWorkspace.normalizeForumReply()` 清掉代码块围栏 / 「回复：」前缀 / 整体引号（换行要保留，不能用会把换行压成空格的 `normalizeText`）。模型返回 `refuse` 时不发表，`FailGate.markRefused(...)` 标记为需人工处理。
+5. `AiWorkspace.normalizeForumReply()` 清掉代码块围栏 / 「回复：」前缀 / 整体引号，并在模型照抄 prompt 示范的两行格式时只取 `Formal Response:` 后面的正文（换行要保留，不能用会把换行压成空格的 `normalizeText`）。`Solver.isRefuseReply(raw)` 命中（prompt 约定做不到就返回 `{refuse}`）时不发表，`FailGate.markRefused(...)` 标记为需人工处理——与作业的 `{"type":"refuse"}` 同一条思路，只是标记形态不同。
 6. 填框必须走 `fillForumReplyBox()`：原生 `HTMLTextAreaElement.prototype.value` setter + `input` 事件。直接 `box.value = text` 不会触发 Vue 的 v-model（实测：DOM 值写进了 256 字，组件内 `value` 仍是 0，发送按钮仍带 `disabled`）。
 7. 判据：等 `.prompt-send-btn` 摘掉 `disabled`（这是「站点确实收到了正文」的信号）→ `click()` → 轮询 `.forum-content .comment-text` 里出现以本次正文开头的那条。实测点发送后条目**立刻**渲染到列表首位，而状态文案 `div.f12.blue-color` 从「未发言」变「已发言」要**整页重载**才更新（同页等 7.5 秒仍是「未发言」）——所以确认只认楼层，最终状态由目录重扫核对，别拿状态文案当提交成功的判据。
 
@@ -291,6 +291,8 @@ API 行为：
 标准答题 prompt 是 `SysPmt_Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node tmp/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `SysPmt_Discussion`（正文夹在 `<AI讨论区Prompt>` 标记之间，由 `Solver.buildForumPrompt()` 硬编码，同一个自测守）。期望的最终模型输出是纯 JSON，如：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
+
+两条路各有各的拒答标记，别混用：作业是 JSON 里的 `{"type":"refuse"}`（`parseAIAnswer()` 归一成 `type: "refuse"`），讨论区是 prompt 约定的 `{refuse}`（`Solver.isRefuseReply()` 判定，容忍 `{"type":"refuse"}`、裸 `refuse`、以及「CoT Reasoning/Formal Response」两行示范格式）。`isRefuseReply` 只做标记匹配、不做语义判断，且要求整段就是那个标记，正文里顺带提到 refuse 不算拒答。
 
 `type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 记 **error** 日志、提示需要人工介入、**暂停 10 秒**后返回 `"refused"`，且**不选选项、不点提交**；调用方据此跳过该题并继续下一题（`solveExerciseQuestion` 返回 false）。
 
