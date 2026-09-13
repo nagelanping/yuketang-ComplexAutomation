@@ -141,3 +141,15 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 另有两处配平：`AiWorkspaceRunner.run()` 早退路径的 `progressed` 语义、`handleBatch` 里我第一版漏掉的 `continue` 已确认。
 
 验证：`node --check`、四个自测、`git diff --check` 全通过。`@version` 2.0.1 → 2.0.2。
+
+## 2026-09-13 工作包 P 第二轮复查：子代理复看 e27e631 后的回修
+
+复查确认「markProgress 判据收口、getReturnUrl 收紧、_writeToOpener 全包 try」三条成立，但「拒答标记不降级」这一步改出了新缺陷：
+
+1. 顶层拒答项保留 `skippedInPlace++` → 每轮收尾都走「原地跳过→reload」，而拒答标记每轮都会再命中该分支 → 无限重载、永不收尾（且 `refusedSeen` 收尾日志恰好不可达）。改为只计 `refusedSeen`。
+2. `refusedWarned` 是模块级 Set，目录整页导航回来即重建 → 警告仍一轮一次。改为 `FailGate.warnedRefused/markRefusedWarned`，落 sessionStorage 的 `ykt_refused_warned`，`clear()` 一并清。
+3. `boot()`/`start()` 的 V2 内容页自启动没校验课堂 id（getReturnUrl 收紧后会转而在本页逐叶推进）。两处补上「两边都取得到时必须一致」。
+
+有意保留（记入 AGENTS）：闸门放开后，交棒窗口内手动再按「开始」不会被挡，会重派发同一条目——为保住手动恢复能力付的价。
+
+验证：`node --check`、四个自测（failgate 扩到六项）、`git diff --check` 全通过。`@version` 2.0.2 → 2.0.3。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.2
+// @version      2.0.3
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -44,6 +44,7 @@
       pendingAutoStart: "ykt_pending_auto_start",
       failCounts: "ykt_fail_counts", // 会话级：记录反复推不动的章节及尝试次数
       handoffKey: "ykt_handoff_key", // 目录交棒前写入本次条目的 FailGate key，供新标签回写
+      refusedWarned: "ykt_refused_warned", // 会话级：已就「AI 拒答」提示过的条目 key，跨目录重载去重
       panelLogs: "ykt_panel_logs",
     },
   };
@@ -420,13 +421,31 @@
         this._write(map);
       }
     },
+    // 「已提示过 AI 拒答」的 key 列表。放 sessionStorage 而不是内存 Set：目录每轮交棒都会整页导航回来，
+    // 内存 Set 随 document 重建，警告就会一轮刷一次。
+    warnedRefused(key) {
+      return this._readRefusedWarned().includes(key);
+    },
+    markRefusedWarned(key) {
+      const list = this._readRefusedWarned();
+      if (list.includes(key)) return;
+      list.push(key);
+      sessionStorage.setItem(
+        Config.storageKeys.refusedWarned,
+        JSON.stringify(list),
+      );
+    },
+    _readRefusedWarned() {
+      const raw = sessionStorage.getItem(Config.storageKeys.refusedWarned);
+      const list = Utils.safeJSONParse(raw, []);
+      return Array.isArray(list) ? list : [];
+    },
     clear() {
       sessionStorage.removeItem(Config.storageKeys.failCounts);
+      sessionStorage.removeItem(Config.storageKeys.refusedWarned);
     },
   };
 
-  // 拒答标记（-2）会一直留在 FailGate 里，目录每轮重扫都会再遇到它；用这个集合保证只提示一次。
-  const refusedWarned = new Set();
 
   // ---- UI 面板 ----
   function createPanel() {
@@ -3514,15 +3533,16 @@
         if (statusState === "completed") continue; // 顶层已完成（含整批完成）一律跳过
         const failKey = FailGate.key(this.classroomId, i, title);
         if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
-        // AI 拒答（子标签经 opener 回写哨兵 -2）：脚本答不完这份作业，重扫时跳过，只提示一次。
-        // 标记保留不降级成 skip(-1)：终结判定还要数它，否则会把「请人工处理」说成「课程已全部完成」。
+        // AI 拒答（子标签经 opener 回写哨兵 -2）：脚本答不完这份作业，重扫时跳过。
+        // 标记保留、不降级成 skip(-1)，否则终结判定分不出「需人工处理」和「已完成」；
+        // 也**不计入** skippedInPlace——那会触发「原地跳过→重载」，而拒答项每轮都会再次命中这里，
+        // 于是变成无限重载；它只计入 refusedSeen，由收尾那条「请手动检查」日志报出来。
         if (FailGate.refused(failKey)) {
-          if (!refusedWarned.has(failKey)) {
-            refusedWarned.add(failKey);
+          if (!FailGate.warnedRefused(failKey)) {
+            FailGate.markRefusedWarned(failKey);
             this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
           }
           refusedSeen++;
-          skippedInPlace++;
           continue;
         }
         if (FailGate.exhausted(failKey)) {
@@ -3746,8 +3766,8 @@
         const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
         if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
         if (FailGate.refused(subKey)) {
-          if (!refusedWarned.has(subKey)) {
-            refusedWarned.add(subKey);
+          if (!FailGate.warnedRefused(subKey)) {
+            FailGate.markRefusedWarned(subKey);
             this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
           }
           continue;
@@ -4848,7 +4868,11 @@
         if (
           pendingAutoStart?.returnUrl &&
           Utils.isV2ContentPage() &&
-          contentRoute
+          contentRoute &&
+          // 课堂对不上就不要在本内容页自启动：getReturnUrl() 也会因课堂不符返回空
+          (!classroomId ||
+            !pendingAutoStart.classroomId ||
+            pendingAutoStart.classroomId === classroomId)
         ) {
           panel.log(
             `检测到 V2 内容页，接管处理：${contentRoute.source}/${contentRoute.type}`,
@@ -4901,8 +4925,14 @@
       panel.setStartHandler(start);
       const pendingAutoStart = Store.getPendingAutoStart();
       const currentClassroomId = Utils.getCurrentClassroomId();
+      // 课堂 id 只要两边都取得到就必须一致：否则别的课堂遗留的 pending 会让本页自己起 Runner，
+      // 而 getReturnUrl() 又因课堂不符返回空 → 它会在本页逐叶推进，而不是回到来源目录。
+      const sameClassroom =
+        !currentClassroomId ||
+        !pendingAutoStart?.classroomId ||
+        pendingAutoStart.classroomId === currentClassroomId;
       const isV2ContinuationPage =
-        Utils.isV2ContentPage() && pendingAutoStart?.returnUrl;
+        Utils.isV2ContentPage() && pendingAutoStart?.returnUrl && sameClassroom;
       const canResumeCurrentPage =
         pendingAutoStart &&
         Utils.isSupportedLearningPage() &&

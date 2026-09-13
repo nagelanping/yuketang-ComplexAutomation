@@ -88,6 +88,8 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 `createPanel()` 里 `invokeStart()` 带一个 `running` 闸门：连点「开始」或在 1.2 秒自动恢复窗口内手点，都只会启动一个 Runner（否则同一目录并发跑两份，同一条目点两次、开两个标签、FailGate 计数双份）。闸门由 `resetStartButton()` 与 `runRoute()` 的 `.finally(() => panel.releaseStart())` 放开——**必须保留后者**：`HANDOFF` 之后目录处于「等新标签回跳」的空闲态，`releaseStart()` 不动按钮文案（仍显示「运行中」）但让用户还能手动再点「开始」恢复，否则一旦新标签没回来（弹窗被拦、标签崩溃、课堂 `waitForEnd` 挂起）用户只能刷新页面。
 
+代价写在明处：**交棒窗口内手动再按「开始」不会被挡**（那时上一轮 Runner 已经结束、闸门已放开），会重扫、重交棒同一条目并多开一个标签、多一次 `FailGate.bump`。这是为了保住手动恢复能力而接受的取舍；要堵这个窗口就得引入「在等新标签」状态 + 超时，属实机验证后再定的事。
+
 `start()` 中的路由分发：
 
 - `/ai-workspace/lms-graph/*` -> `AiWorkspaceRunner`
@@ -182,7 +184,8 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - `exhausted(key)` 在 `maxAttempts` 次后跳过。
 - `skip(key)` 标记有意跳过（考试、未知类型、被禁用的作业）。
 - `skipped(key)` 检查有意跳过状态。
-- `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。`V2Runner.run()` 与 `handleBatch()` 两处扫描都要处理它，且**提示只打一次**（模块级 `refusedWarned` Set）：标记留在表里不降级成 `-1`，因为终结判定要数它——否则面板会把「有题目需要人工处理」说成「课程已全部完成」（`refusedSeen` 参与 `遍历结束…请手动检查` 那条日志）。
+- `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。`V2Runner.run()` 与 `handleBatch()` 两处扫描都要处理它，且**提示只打一次**（`warnedRefused` / `markRefusedWarned`，存在 sessionStorage 的 `ykt_refused_warned` 里——目录每轮交棒都会整页导航回来、模块级 Set 会随 document 重建，只有落在 sessionStorage 才真的一次；`clear()` 一并清掉）。
+- 拒答项在顶层扫描里**只计入 `refusedSeen`，不计入 `skippedInPlace`**：`skippedInPlace > 0` 会触发「原地跳过→重载」，而拒答标记每轮都会再次命中该分支，计进去就是无限重载；标记也不降级成 `skip(-1)`，否则终结判定分不出「需人工处理」和「已完成」（`refusedSeen` 参与 `遍历结束…请手动检查` 那条日志）。
 - `markProgress(key)`：子标签确认本知识点做成了时清掉来源目录上的计数。目录侧只负责交棒、看不到内容页结果，若只在交棒时 `bump`，服务端回写慢的条目（作业实测第 3 轮才翻成已完成）会在做完之前就数满 `maxAttempts` 被跳过。
 - 「做成了」的判据必须严：`AiWorkspaceRunner.run()` 里 `progressed` 与 `ok` 分开——未知类型分支（`ok = true`）**不算进展**，否则目录会为它反复交棒、永远到不了 `maxAttempts`；`handleExercise` 也只在真遇到「已提交」或成功作答的题时才返回 true（`didWork && allSubmitted`），题号列表为空、题面读不到、`autoAI` 关闭这些「什么都没做」的路径一律返回 false。
 - `markRefused` / `markProgress` 都走内部 `_writeToOpener(key, value)`：写的是 `window.opener.sessionStorage`（子标签只有自己那份拷贝，写自己那份目录读不到），`value === null` 表示删键。整个读写都包在 try 里：拿不到 opener、跨源、窗口正在导航时返回 false，**绝不把异常抛给调用方**（它挂在 `autoSelect()` 之前，抛出去会让目录永久停等）。

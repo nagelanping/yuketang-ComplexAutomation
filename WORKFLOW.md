@@ -537,6 +537,18 @@ git diff --check
 5. **拒答标记不再降级成 `-1`**：降级会丢掉信息，导致终结日志把「有题目需人工处理」说成「课程已全部完成」。改为模块级 `refusedWarned` Set 保证只提示一次，并新增 `refusedSeen` 计入 `遍历结束：…请手动检查`。
 
 回修后 `node --check`、`tmp/failgate-selftest.cjs`、`tmp/parse-answer-selftest.cjs`、`tmp/poll-selftest.cjs`、`tmp/prompt-sync-check.cjs`、`git diff --check` 全部通过。
+
+### 第二轮复查与回修（2026-09-13，子代理复看 `e27e631`）
+
+复查确认「`markProgress` 判据收口、`getReturnUrl` 收紧、`_writeToOpener` 全包 try」三条成立，但上一轮「拒答标记不降级」改出了第三轮缺陷，已回修：
+
+1. **顶层拒答项把目录打进无限重载（严重）**：该分支保留了 `skippedInPlace++`，于是每轮收尾都走「原地跳过 N 项 → `location.reload()`」，而拒答标记每轮都会再次命中同一分支——循环重载、永不收尾，且收尾那条 `refusedSeen` 日志恰好因此不可达。现在拒答项**只计入 `refusedSeen`**，不再计 `skippedInPlace`。
+2. **提示去重只在单页有效（中）**：`refusedWarned` 是模块级 Set，目录每轮交棒都会整页导航回来、Set 随 document 重建，警告仍会一轮刷一次。改为 `FailGate.warnedRefused()` / `markRefusedWarned()`，落在 sessionStorage 的 `ykt_refused_warned`（`clear()` 一并清掉）。
+3. **`boot()` / `start()` 的 V2 内容页自启动仍不校验课堂（中）**：`getReturnUrl()` 收紧后，跨课堂的脏 pending 会让本页自己起 Runner，而 `getReturnUrl()` 返回空 → 它转而在本页逐叶推进。两处判据都补上「课堂 id 两边都取得到时必须一致」。
+
+另有一处**有意保留**并写进 `AGENTS.md`：闸门放开后，交棒窗口内手动再按「开始」不会被挡（会重派发同一条目）。这是为保住手动恢复能力付的价，要堵它需要「在等新标签」状态 + 超时，属实机验证后再定。
+
+`tmp/failgate-selftest.cjs` 扩到六项：新增「拒答提示跨页面重建仍去重、重复标记不重复入表、`clear()` 一并清掉」。
 ## 完成维护
 
 完成任务后维护该文档，在已完成的对应条目下进行简要说明。
