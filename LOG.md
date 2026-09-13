@@ -233,3 +233,15 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 讨论区页实机观测（`ykt-ff`，班级 31317597，leaf 84703561）回填 `OBSERVE.md`：该页**无字体混淆**，教师正文 `.main-text-attachment` 为纯文本（img/a/pre/mjx 全 0），回复控件是普通 `textarea.el-textarea__inner`（Enter 发送），帖子在 `.forum-content > .forum-item > .publish-forum-topic`，完成状态是 `.control-right > div.f12.blue-color` 的「未发言」。
 
 据此定下讨论区输入方式：**复制文本问 AI，不截图**（详见本轮回复）。
+
+## 2026-09-13 讨论区自动回复（@version 2.1.0）
+
+机主先做了一轮手动实测（授权 agent 用 `ykt-ff` 代发一条），再据此写 prompt 并实现。
+
+- 决策：**复制文本问 AI，不截图**。该页 `[class*=encrypted]` 命中 0、无 `exam_font_`，教师正文是纯文本，截图只会多一次 OCR 与 html2canvas 的字体坑；也不喂别人的帖子（示范帖质量低，会带偏输出）。
+- `Solver.buildForumPrompt()`（占位被机主改写后同步，34 行）：正文与 `SysPmt_Discussion` 的 `<AI讨论区Prompt>` 区块逐行一致；`askAI(imageDataUrl, { systemPrompt, userText })` 增加纯文本分支，与作业截图共用同一套请求组装 / 流式 / 终止逻辑。
+- `AiWorkspace`：`isForumRouteType`、`getForumBodyText/getForumTitle/getForumStatusText`、`getForumReplyBox/getForumSendButton/getForumPostTexts`、`keepLineBreaks`、`normalizeForumReply`。
+- `AiWorkspaceRunner.handleForum()`：读正文 → 文本问 AI → 清洗 → 填框（原生 setter + `input`，实测直接赋值对 Vue v-model 无效）→ 等 `.prompt-send-btn` 摘掉 `disabled` → 点发送 → 轮询 `.comment-text` 出现自己的楼层。模型返回 `refuse` 时 `FailGate.markRefused` 标记需人工处理。
+- 目录侧：顶层讨论条目与批次里的讨论子项由「一律就地 `FailGate.skip`」改为**交棒**（`autoAI` 关闭时仍是跳过）。
+- 实机观测（回填 `OBSERVE.md`）：提交后新楼层立刻出现在列表首位；状态文案「未发言→已发言」、`讨论区（13→14）`、完成度 9.79%→11.26% 都要**整页重载**才更新；列表只渲染最新 10 条（这解释了此前「计数 13 而 DOM 10 条」）。
+- 新增 `tmp/forum-selftest.cjs`（六项）；`tmp/prompt-sync-check.cjs` 扩成两份 prompt 都查（93 行 homework + 34 行 discussion）。

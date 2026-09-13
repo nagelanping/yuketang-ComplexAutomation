@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.9
+// @version      2.1.0
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2182,6 +2182,51 @@
         String(type).toLowerCase(),
       );
     },
+    // ---- 讨论区（/ai-workspace/lms-graph/{classroomId}/forum/{leafId}）----
+    // 该页无字体混淆，教师正文与回复框都是纯文本，所以走「复制文本问 AI」而不是截图（实测见 OBSERVE.md）。
+    isForumRouteType(type = "") {
+      return /^(forum|taolun|discussion)$/i.test(String(type).toLowerCase());
+    },
+    getForumBodyText() {
+      return this.keepLineBreaks(
+        document.querySelector(".main-text-attachment")?.innerText || "",
+      );
+    },
+    // 标题行形如「讨论 <标题> 考核截止时间：… <未发言|已发言>」
+    getForumTitle() {
+      const text = document.querySelector(".learning-space-control-unit")?.innerText;
+      return (String(text || "").match(/讨论\s*(.+?)\s*考核截止时间/) || [])[1] || "";
+    },
+    getForumStatusText() {
+      return this.normalizeText(
+        document.querySelector(".learning-space-control-unit .control-right")
+          ?.innerText || "",
+      );
+    },
+    getForumReplyBox() {
+      const el = document.querySelector("textarea.el-textarea__inner");
+      return el && el.offsetParent !== null ? el : null;
+    },
+    getForumSendButton() {
+      return document.querySelector(".prompt-send-btn");
+    },
+    getForumPostTexts() {
+      return [...document.querySelectorAll(".forum-content .comment-text")].map(
+        (el) => this.normalizeText(el.innerText || ""),
+      );
+    },
+    // 保留换行的清洗：回复正文要按段落发表，不能用 normalizeText（它把换行压成空格）
+    keepLineBreaks(text = "") {
+      return String(text || "").replace(/\r\n?/g, "\n").trim();
+    },
+    // 模型可能包一层代码块或引号、写个「回复：」前缀；清成可以直接发表的一段文本
+    normalizeForumReply(raw = "") {
+      let text = this.keepLineBreaks(raw);
+      text = text.replace(/^```[a-z]*\s*/i, "").replace(/\n?```$/, "");
+      text = text.replace(/^(回复|答复|回答)\s*[:：]\s*/, "");
+      if (/^["“'「]([\s\S]*)["”'」]$/.test(text)) text = text.slice(1, -1);
+      return this.keepLineBreaks(text);
+    },
     getAccessibleDocuments() {
       const docs = [document];
       for (const iframe of document.querySelectorAll("iframe")) {
@@ -2880,6 +2925,47 @@
       ].join("\n");
       return { system };
     },
+    // 讨论区回复的 system prompt。正文与 SysPmt_Discussion 的 <AI讨论区Prompt> 区块逐行一致，
+    // 由 tmp/prompt-sync-check.cjs 守漂移（与 buildPrompt() 同一套规矩：改 md 后同步代码）。
+    buildForumPrompt() {
+      const system = [
+        "# 角色",
+        "",
+        "你是一名大学生。你直接回答老师的问题，或按老师要求进行讨论。你的回答以老师的任务要求为准。",
+        "",
+        "## 任务",
+        "",
+        "1. 读取老师提出的问题或要求。",
+        "2. 判断要求属于事实回答、观点讨论，还是按指定步骤完成。",
+        "3. 只处理老师明确提出的内容。",
+        "4. 直接给出回答。需要理由时给出理由。需要讨论时给出观点和依据。",
+        "",
+        "## 输出格式",
+        "",
+        "- 只输出回答内容。",
+        "- 使用纯文本。",
+        "- 不使用 Markdown 语法。不要使用标题、加粗、斜体、列表标记、表格、引用块、代码块、链接、分隔线。",
+        "- 不使用表情符号或装饰 Unicode 字符。",
+        "- 不寒暄。不要写“老师您好”“好的”“谢谢”“希望有帮助”等。",
+        "- 不写与回答无关的内容。",
+        "- 不附加没有被要求输出的内容。",
+        "- 老师提出多个问题时，按提问顺序回答。",
+        "- 老师要求讨论时，按讨论要求输出，不扩展成无关文章。",
+        "",
+        "## 语气与写作规则",
+        "",
+        "- 语气简朴、直白、平静。",
+        "- 使用常用词和短句。每句表达一个意思。",
+        "- 不夸赞老师的问题，不评价问题好坏。",
+        "- 禁止浮夸、夸张、吹捧、销售式语言。",
+        "- 禁止不恰当的比喻、拟人、俗语、网络流行语。",
+        "- 禁止空泛限定词，如“非常”“真的”“其实”“基本上”“某种程度上”。",
+        "- 禁止二元纠正形式，如“不是X，而是Y”。",
+        "- 禁止填充过渡语，如“首先”“其次”“最后”“总而言之”“众所周知”。",
+        "- 不使用 em dash 或装饰性破折号。",
+      ].join("\n");
+      return { system };
+    },
     isThinkingModel(url, model) {
       return /qwen|qwq|deepseek-r1|reason|thinking|agentworld|vllm/i.test(
         `${url || ""} ${model || ""}`,
@@ -2913,8 +2999,11 @@
         chat_template_kwargs: { enable_thinking: false },
       };
     },
-    // 只吃截图：题型判定与选项数都不下发给模型（prompt 是固定 system 文本，见 buildPrompt 与 SysPmt_Homework.md）
-    async askAI(imageDataUrl) {
+    // 两种用法：
+    // - 作业答题：只吃截图（imageDataUrl），题型判定与选项数都不下发给模型（prompt 是 buildPrompt() 的固定
+    //   system 文本，见 SysPmt_Homework.md）；
+    // - 讨论区回复：`askAI(null, { systemPrompt, userText })`，纯文本进纯文本出（该页无字体混淆，见 OBSERVE.md）。
+    async askAI(imageDataUrl, { systemPrompt = "", userText = "" } = {}) {
       const saved = Store.getAIConf();
       const API_KEY = saved.key;
       const MODEL_NAME = saved.model;
@@ -2930,13 +3019,18 @@
           reject("已终止");
           return;
         }
+        if (!imageDataUrl && !userText) {
+          reject("没有可发送的内容");
+          return;
+        }
         if (!API_KEY || API_KEY.includes("sk-xxxx")) {
           const msg = "请在 [模型设置] 中填写有效的 API Key";
           panel.log(msg, "warning");
           reject(msg);
           return;
         }
-        const { system } = this.buildPrompt();
+        // 讨论区走自己的 prompt（buildForumPrompt），作业答题仍用固定 system 文本
+        const system = systemPrompt || this.buildPrompt().system;
         const maxOutputTokens = this.getMaxOutputTokens(saved);
         const thinkingParams = this.buildThinkingParams(
           Boolean(saved.thinkingEnabled),
@@ -2961,7 +3055,11 @@
                   },
                   {
                     role: "user",
-                    content: [{ type: "input_image", image_url: imageDataUrl }],
+                    content: [
+                      userText
+                        ? { type: "input_text", text: userText }
+                        : { type: "input_image", image_url: imageDataUrl },
+                    ],
                   },
                 ],
                 max_output_tokens: maxOutputTokens,
@@ -2975,7 +3073,9 @@
                   {
                     role: "user",
                     content: [
-                      { type: "image_url", image_url: { url: imageDataUrl } },
+                      userText
+                        ? { type: "text", text: userText }
+                        : { type: "image_url", image_url: { url: imageDataUrl } },
                     ],
                   },
                 ],
@@ -2986,7 +3086,7 @@
                 ...thinkingParams,
               };
         panel.log(
-          `请求多模态模型：${API_URL}，${saved.stream ? "stream" : "non-stream"}，thinking=${saved.thinkingEnabled ? "on" : "off"}，max_tokens=${maxOutputTokens}`,
+          `请求${userText ? "文本" : "多模态"}模型：${API_URL}，${saved.stream ? "stream" : "non-stream"}，thinking=${saved.thinkingEnabled ? "on" : "off"}，max_tokens=${maxOutputTokens}`,
         );
         let settled = false;
         let requestHandle = null;
@@ -3739,12 +3839,29 @@
           skippedInPlace++;
           continue;
         }
+        // 讨论区（tag 为 taolun/forum）：AI 开着时交棒给论坛页自动回复；关掉 AI 时按原来的就地跳过。
+        const isForum =
+          type.includes("taolun") ||
+          type.includes("forum") ||
+          /讨论/.test(tagText);
+        if (isForum) {
+          this.panel.log(
+            `处理第 ${i + 1}/${list.length} 项，类型 ${type}，状态 ${Utils.stateLabel(statusState)}，标题：${title}`,
+          );
+          if (!Store.getFeatureConf().autoAI) {
+            this.panel.log("已关闭AI自动答题，跳过该讨论项", "warning");
+            FailGate.skip(failKey);
+            skippedInPlace++;
+            continue;
+          }
+        }
         if (
           !type.includes("shipin") &&
           !isBatch &&
           !type.includes("ketang") &&
           !type.includes("kejian") &&
-          !isHomework
+          !isHomework &&
+          !isForum
         ) {
           this.panel.log(
             `处理第 ${i + 1}/${list.length} 项，类型 ${type}，状态 ${Utils.stateLabel(statusState)}，标题：${title}`,
@@ -3755,6 +3872,7 @@
           continue;
         }
         target = {
+          isForum,
           course,
           listNode: list[i],
           type,
@@ -3807,6 +3925,7 @@
         title,
         isBatch,
         isHomework,
+        isForum,
         statusState,
         failKey,
       } = target;
@@ -3825,6 +3944,9 @@
       } else if (type.includes("kejian")) {
         advanced = await this.handleCourseware(course, failKey);
       } else if (isHomework) {
+        advanced = await this.openContentEntry(course, failKey);
+      } else if (isForum) {
+        // 讨论区：和作业/视频一样交棒给新标签（论坛页由 AiWorkspaceRunner.handleForum 自动回复）
         advanced = await this.openContentEntry(course, failKey);
       } else {
         advanced = false;
@@ -3961,14 +4083,16 @@
           FailGate.skip(subKey);
           return true;
         }
-        // 讨论区子项（taolun / forum）：回复内容得先由模型生成，发帖未实现，一律就地跳过、不交棒。
-        // 未来接 askAI 的框架：交棒的新标签读取主题与已有楼层 -> askAI 生成回复（现有 askAI 只吃
-        // 题目截图，需先扩展文本入参）-> 填入回复框并提交 -> 成功后 returnToSource 重载目录。
-        // 在此之前交棒只会得到「开标签 -> 不处理 -> 关标签 -> 再交棒」的空转，满 3 轮才被跳过。
+        // 讨论区子项（taolun / forum）：AI 开着就和内容子项一样交棒——新标签的论坛页读教师正文、文本问 AI、
+        // 填回复框发表（`AiWorkspaceRunner.handleForum`），完成后 `returnToSource` 重载目录继续。
+        // 关掉 AI 时没有内容可发，仍按原来的就地跳过处理。
         if (tagHref.includes("taolun") || tagHref.includes("forum")) {
-          this.panel.log(`讨论区自动回复尚未实现，跳过：${title}`, "warning");
-          FailGate.skip(subKey);
-          return true;
+          if (!Store.getFeatureConf().autoAI) {
+            this.panel.log(`已关闭AI自动答题，跳过讨论区子项：${title}`, "warning");
+            FailGate.skip(subKey);
+            return true;
+          }
+          return await this.openContentEntry(item, subKey);
         }
 
         // 内容子项：点击后站点新开标签处理该知识点。目录只点击一次并计子项次数（FailGate 兜底防死循环），
@@ -5018,6 +5142,116 @@
       return allSubmitted && didWork;
     }
 
+    // 讨论区自动回复：读教师正文（不喂别人的帖子）-> 文本问 AI -> 填回复框 -> 点发送 -> 确认自己的楼层出现。
+    // 实测（见 OBSERVE.md）：发送后条目立刻渲染到 .forum-content 首位，但状态文案「未发言」要页面重载
+    // 才变「已发言」——服务端回写和作业一样慢，所以这里只认「楼层出现了」，目录重扫再核对最终状态。
+    async handleForum() {
+      if (StopGate.isStopped()) return false;
+      if (!Store.getFeatureConf().autoAI) {
+        this.panel.log("已关闭 AI 自动答题，讨论区不自动回复", "warning");
+        return false;
+      }
+      if (/已发言/.test(AiWorkspace.getForumStatusText())) {
+        this.panel.log("本讨论的服务端状态已是「已发言」，无需再发");
+        return true;
+      }
+      const box = await Utils.poll(() => AiWorkspace.getForumReplyBox(), {
+        interval: 500,
+        timeout: 10000,
+      });
+      if (!box) {
+        this.panel.log("未找到讨论区回复框，本轮不处理", "warning");
+        return false;
+      }
+      const bodyText = AiWorkspace.getForumBodyText();
+      if (bodyText.length < 10) {
+        this.panel.log("未读到讨论正文（.main-text-attachment），本轮记未推进", "warning");
+        return false;
+      }
+      const title = AiWorkspace.getForumTitle();
+      const userText = [
+        title ? `讨论标题：${title}` : "",
+        "讨论要求（教师正文）：",
+        bodyText,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      this.panel.log("请求文本模型生成讨论区回复...");
+      let raw = "";
+      try {
+        raw = await Solver.askAI(null, {
+          systemPrompt: Solver.buildForumPrompt().system,
+          userText,
+        });
+      } catch (err) {
+        if (StopGate.isStopped()) return false; // 终止导致的失败不必报错、也不重试
+        this.panel.log(`讨论区生成回复失败：${err}`, "error");
+        return false;
+      }
+      if (StopGate.isStopped()) return false;
+      const reply = AiWorkspace.normalizeForumReply(raw);
+      if (!reply) {
+        this.panel.log("模型没给出可用的回复正文，本轮记未推进", "warning");
+        return false;
+      }
+      // 模型按 prompt 约定拒答时不能把「refuse」当正文发出去；和作业一样标成拒答，交给目录侧跳过
+      if (/^refuse$/i.test(reply)) {
+        FailGate.markRefused(sessionStorage.getItem(Config.storageKeys.handoffKey));
+        this.panel.log(
+          "AI 判定无法作答该讨论，已跳过并标记为需人工处理",
+          "error",
+        );
+        return false;
+      }
+      this.panel.log(`拟发表（${reply.length} 字）：${reply.slice(0, 60)}...`);
+      if (!this.fillForumReplyBox(box, reply)) {
+        this.panel.log("未能写入回复框，本轮记未推进", "warning");
+        return false;
+      }
+      // 直接赋值不会触发 Vue 的 v-model；写完 input 事件后组件状态异步刷新，发送按钮的
+      // disabled 类要等这一次 flush 才摘掉——它就是「站点确实收到了正文」的判据。
+      const ready = await Utils.poll(
+        () => {
+          const btn = AiWorkspace.getForumSendButton();
+          return Boolean(btn) && !btn.classList.contains("disabled");
+        },
+        { interval: 300, timeout: 8000 },
+      );
+      if (!ready) {
+        this.panel.log("回复框已填但发送按钮始终未解锁，本轮记未推进", "warning");
+        return false;
+      }
+      if (StopGate.isStopped()) return false;
+      AiWorkspace.getForumSendButton().click();
+      const head = reply.slice(0, 40);
+      const posted = await Utils.poll(
+        () => AiWorkspace.getForumPostTexts().some((t) => t.startsWith(head)),
+        { interval: 500, timeout: 10000 },
+      );
+      if (!posted) {
+        this.panel.log("提交后未确认到自己的楼层，本轮记未推进", "warning");
+        return false;
+      }
+      this.panel.log("讨论区回复已发表（页面「已发言」标记要重载后才更新，由目录重扫核对）");
+      return true;
+    }
+
+    // 原生 setter + input 事件：实测这一串能让 ElInput 的 v-model 生效、发送按钮解锁
+    fillForumReplyBox(box, text) {
+      try {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLTextAreaElement.prototype,
+          "value",
+        )?.set;
+        if (!setter) return false;
+        setter.call(box, text);
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
     async run(preventScreenCheckSwitch = true) {
       // 防切屏只在外部首次启动时启用一次，避免逐项刷时重复注入
       if (preventScreenCheckSwitch) preventScreenCheck();
@@ -5039,6 +5273,9 @@
           progressed = ok;
         } else if (AiWorkspace.isExerciseRouteType(route.type)) {
           ok = await this.handleExercise(route);
+          progressed = ok;
+        } else if (AiWorkspace.isForumRouteType(route.type)) {
+          ok = await this.handleForum();
           progressed = ok;
         } else if (route.type === "content") {
           ok = await this.handleMedia(route);

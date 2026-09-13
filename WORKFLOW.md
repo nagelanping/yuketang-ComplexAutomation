@@ -48,7 +48,7 @@ rg -n '<本工作包涉及的符号>' yuketang-ComplexAutomation.user.js
 - 行为、架构、路由、选择器、存储 key、AI 流程或核心符号变化时，同步更新 `AGENTS.md`。
 - 新的网页观测同步更新 `OBSERVE.md`。用户操作方式变化时同步更新 `README.md`。
 - `SysPmt_Homework.md`（正文在 `<AI识图作业Prompt>` 标记之间）是作业答题的 prompt 源文本。修改 prompt 时，同次更新 `Solver.buildPrompt()`，两者不得漂移，改完跑 `node tmp/prompt-sync-check.cjs`。
-- `SysPmt_Discussion`（占位，尚无内容）预备作讨论区回复的 prompt 源；接入脚本时按同样的标记 + 同步检查方式办。
+- `SysPmt_Discussion`（正文在 `<AI讨论区Prompt>` 标记之间）是讨论区回复的 prompt 源文本，对应 `Solver.buildForumPrompt()`；同一个 `tmp/prompt-sync-check.cjs` 一并核对两份。
 
 ### 4. 验证并收尾
 
