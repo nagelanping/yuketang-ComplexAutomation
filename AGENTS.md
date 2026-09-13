@@ -236,7 +236,9 @@ API 行为：
 
 标准答题 prompt 是 `SystemPrompt.md`。若答题行为变化，检查并按需更新该文件。期望的最终模型输出是纯 JSON，如：
 
-`{"type":"choice|multiple|truefalse|fillblank","answers":["A"]}`
+`{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
+
+`type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 立即返回 `"refused"` 且**不选选项、不点提交**；调用方据此跳过该题（`solveExerciseQuestion` 返回 false，有题号列表的循环 `break` 到下一题），并在面板日志留下记录，等人工处理。
 
 ## 编辑规则
 
