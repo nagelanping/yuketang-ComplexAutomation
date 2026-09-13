@@ -44,3 +44,47 @@ git diff --check
 附带提醒（未改）：示例 5 与示例 6 前提都是「题目要求访问链接」，结论相反（5 是能答、6 是不能答），若所用模型没有联网工具，示例 5 可能诱导编造答案。
 
 版本：`@version` 1.3.2 → **1.4.0**（死代码删除 + AI 拒答回写来源目录 + prompt 重建）。
+
+## 2026-09-13 工作包 B：删除失效配置并修 README
+
+删除 `Config.aiMaxOutputTokens`（无读取点）、`Solver.buildSamplingParams()` 与两条 payload 展开（`forceSamplingParams` 从未写进过配置，函数恒返回 `{}`）、`Decipherer.deobfEnabled` / `fontDisabled` 两个常真字段及其分支，并就近注明上游开关未移植、反混淆恒开。
+
+README 按当前 UI 修正：面板按钮改为 `模型设置` / `清除失败记录` / `暂停`，反混淆标为常开且截图答题依赖，「内部强制采样参数开关」一句改为「不发送 `temperature` 与 `top_p`」。另修为同类漂移：日志消息「请在 [AI配置] 中填写有效的 API Key」→「[模型设置]」。
+
+验证：`rg` 五个失效符号在 userscript 与 README 中均无命中；`node --check`、`git diff --check`、`tmp/prompt-sync-check.cjs` 通过；`Decipherer.start()` 仍在 iframe 与主文档两条启动路径上。
+
+待机主定夺（未动）：面板勾选框「自动回复图文与讨论区」（`autoComment`）自工作包 A 删除 `autoCommentItem` 后已无实现，开启只会让讨论子项空转并被 FailGate 跳过。要么按新标签侧接住评论类型实现它，要么连开关一起删。
+
+版本：`@version` 1.4.0 → **1.4.1**（失效配置删除 + README/日志文案同步，无行为变更）。
+
+## 2026-09-13 工作包 O：讨论区自动回复退回框架（机主指示）
+
+删除面板勾选框「自动回复图文与讨论区」、`Store.getFeatureConf()` 的 `autoComment` 及对应的 `ui` 引用与保存逻辑；`handleBatch` 的讨论区分支不再看开关，`taolun` / `forum` 子项一律就地 `FailGate.skip` + warning，不交棒。
+
+框架以注释形式留在该分支上方：未来交棒的新标签读主题与楼层 → `askAI` 生成回复（现有 `askAI` 只吃题目截图，需先扩展文本入参）→ 填入回复框并提交 → 成功后 `returnToSource`。注释同时写明在此之前交棒只会空转。
+
+README 同步：功能列表注明讨论区自动回复尚未实现；「模型设置」一项去掉该开关。
+
+未跑 Firefox：改动是跳过分支与面板结构，待机主实机确认面板只剩「自动作答作业与题目」、讨论子项日志为「讨论区自动回复尚未实现，跳过」。
+
+## 2026-09-13 工作包 D：Utils.poll() 异常收敛
+
+`Utils.poll()` 的 checker 原先裸调：抛错时那次 tick 直接中断，`clearInterval` 与超时判定都在其后，Promise 永不落定。现在把 `checker()` 包进 `try/catch`，抛错则打印 `[poll] checker 抛错，按未满足返回 false` 并 `clearInterval` + `resolve(false)`，与超时同一语义；未改 reject，未在调用点补 try/catch。
+
+新增 `tmp/poll-selftest.cjs`：从 userscript 正则抽出 `poll` 方法体执行（不与实现写两遍），断言 checker 成功返回 true、超时返回 false、抛错在有限时间内返回 false、抛错后 interval 已清理。旧实现下第三项会因 Promise 悬空而失败。
+
+实机待办：目录页跑一遍基础流程，确认原有等待语义未变（唯一变化分支是 checker 抛错，各调用点拿 false 后走「未确认，本轮不推进」并靠 FailGate 封顶）。
+
+## 2026-09-13 工作包 E：修判断题文本回退
+
+`Solver.parseAIAnswer()` 的非 JSON 判断题回退原先「先肯定后否定」，`不正确` / `不是正确答案` 会先命中「正确」被判成「对」。改为先判否定（`不正确|不对|不是|错误|错|false|no`）再判肯定，未扩成自然语言分类器。
+
+同段代码的第二个坑（自测时发现）：`JSON.parse("true")` / `JSON.parse("false")` 是合法的，但结果不是答案对象，原逻辑会走 JSON 分支返回空 `answers`。现在只有解析结果为对象才走 JSON 分支，其余落到文本回退，于是裸 `true`/`false` 也能判成对/错。
+
+自测 `tmp/parse-answer-selftest.cjs`（从 userscript 抽出方法体执行，`panel` 用桩）：6 例肯定、7 例否定、JSON（围栏 / 无 type / refuse）、其他题型回退，全部通过。
+
+未改但同类：`answerToIndices()` 判 `truefalse` 答案时仍是先肯定后否定，`answers:["不正确"]` 会映射成「对」；属 JSON 路径语义，需单独决定。
+
+补充（同日，机主指示）：判断题的对/错判定统一到两处、同一条规则——否定标记收窄为「不」（`/不|错|false|no/i`，覆盖 不是/不正确/不对/不符合），并先判否定后判肯定。`parseAIAnswer` 的非 JSON 回退照此简化；`answerToIndices()` 的 `truefalse` 分支同样改序，原先 `answers:["不正确"]` 会按「对」去点第一个选项，现在点第二个。`A`/`B`/`对`/`错`/`true`/`false` 的映射不变。
+
+自测扩到两个函数：肯定 6 例、否定 8 例、JSON 三例、其他题型两例、选项映射两组，全部通过。

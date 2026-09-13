@@ -73,6 +73,8 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
   `getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
+- 等待原语与本地自测：
+  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`（`tmp/` 被 gitignore，只是本地脚本）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -263,6 +265,15 @@ API 行为：
 
 `solveExerciseQuestion` 的 refuse 分支还会调用 `FailGate.markRefused(...)`，把来源目录里本次交棒条目的 key 标成 `-2`：这一题既然脚本答不了，那份作业就不可能靠脚本刷完，目录重扫时应当直接跳过，而不是再交棒重试到 FailGate 满 3 次。key 由目录在交棒前写入 `sessionStorage`（`ykt_handoff_key`），子标签继承的是拷贝，因此回写目标是 `window.opener.sessionStorage`；拿不到 opener（用户直接在本页启动、窗口已关）时静默退回原来的重试行为。
 
+判断题的「对 / 错」判定在 `Solver` 里有两处，**都以「不」为否定标记**（`/不|错|false|no/i`，`不` 覆盖不是 / 不正确 / 不对 / 不符合），且都是**先判否定再判肯定**：
+
+- `parseAIAnswer()` 的非 JSON 回退（模型没按 Schema 输出时的兜底）：否定优先，否则「不正确」会先命中「正确」被判成对。同一处还只把**对象**形态的 JSON 当答案对象——裸 `true` / `false` 也是合法 JSON 但没有 `answers`，放行会得到空答案，现在它们落到文本回退。
+- `answerToIndices()` 的选项映射（0 = 对/第一个选项，1 = 错/第二个选项）：否定优先，否则 `answers:["不正确"]` 会去点「对」。
+
+改这里跑 `node tmp/parse-answer-selftest.cjs`（从脚本抽出方法体执行，覆盖肯定 / 否定 / JSON / 其他题型回退 / 选项映射）。遇到无法可靠分类的新表达先记样本再补最小规则，不要扩成自然语言分类器。
+
+不要给肯定/否定加「整句语义判断」：`不` 是刻意选的宽标记，句子里出现「不」就按否定处理，宁可判错也不要判反。
+
 ## 编辑规则
 
 - 除非用户明确要求结构性变更，保持项目单文件。
@@ -289,11 +300,11 @@ API 行为：
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
 - 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
 - `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
-- 讨论（`taolun`/`forum`）子项只在 `autoComment === false` 时才在 `handleBatch` 里就地 `FailGate.skip`（v1.2.3 起，避免「交棒→新标签不处理→关标签→再交棒」空转）；**开启**自动评论时仍会交棒进论坛页，而新标签的 `AiWorkspaceRunner` 不处理评论类型 → 空转 `maxAttempts` 轮后被 `FailGate` 跳过、条目永不完成。v1.4.0 起脚本已无发帖实现（`autoCommentItem` 随死代码删除），这个开关现在唯一的效果就是让讨论子项空转；要么在新标签侧接住评论类型并发帖，要么移除该开关与面板勾选框。
+- 讨论（`taolun`/`forum`）子项**一律**在 `handleBatch` 里就地 `FailGate.skip`（v1.4.1 起，不再看用户开关）：发帖内容得先由模型生成，脚本没有实现，交棒进论坛页的 `AiWorkspaceRunner` 也不处理该类型，交棒只会得到「开标签→不处理→关标签→再交棒」空转、满 `maxAttempts` 才跳过。`autoComment` 开关与面板勾选框已删除；未来接 `askAI` 的流程写在 `handleBatch` 该分支上方的注释里（新标签读主题与楼层 → askAI 生成回复 → 填框提交 → `returnToSource`）。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
 - `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 在既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `AUDIT.md` 第 13 条）。
 - `html2canvas` 截图把中文渲染成错字，根因是页面加载的混淆字体（DOM 文本被该字体做了字形置换），不是截图代码或图片本身；修复靠 `Decipherer` 先把 DOM 还原为真实中文，再在截图 `onclone` 里换掉字体栈。只改 `@font-face` 不管用。
 - 题目（exercise）跑在 `#iframeExerciseId` iframe（`/v2/web/iframe-exercise/…`）内，主文档既没有题目 DOM 也没有混淆字体；若在 iframe 分支直接 `return`，`Decipherer` 不会在 iframe 内运行，反混淆失效（DOM 仍是错字，复制与截图都不对）。反混淆必须在 iframe 分支里先启动。
 - 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
-- `Utils.poll()` 的 checker 抛异常时 Promise **永不落定**：超时判定与 `clearInterval` 都在 checker 之后，`setInterval` 回调抛出后不会再走到。写 checker 时避免访问可能已卸载节点的属性，或等内容层加上 try/catch（见 `AUDIT.md` 第 9 条）。
+- `Utils.poll()` 的 checker 抛错不再让 Promise 悬空（v1.4.1 起）：内部 `try/catch` 收口，打印 `[poll] checker 抛错，按未满足返回 false` 后 `clearInterval` 并 `resolve(false)`，与超时同语义。写 checker 时仍应避免访问可能已卸载节点的属性——抛错现在会**立刻**返回 `false`（而不是等到超时），调用方会当成一次未推进，靠 FailGate 兜底。
 - 交棒子标签拿到的是来源目录 sessionStorage 的**拷贝**：子标签自己写 `ykt_fail_counts`，目录读不到（实测同一 key 两边计数不同）。跨标签回写只能写 `window.opener.sessionStorage`，且 `openContentEntry` 必须在点击**之前**写好 `ykt_handoff_key`，因为拷贝是在新标签创建那一刻生成的。

@@ -21,7 +21,7 @@ git status --short
 rg -n '<本工作包涉及的符号>' yuketang-ComplexAutomation.user.js
 ```
 
-- 未提交改动属于机主，不覆盖、不还原、不混入本工作包。
+- 未提交改动不覆盖、不还原、不混入本工作包。
 - 阅读相关函数的所有调用点和相邻控制流。删除函数前确认全仓库只有定义、没有调用。
 - `ref/` 只用于对照，不修改。
 - 不新增构建系统、依赖或测试框架。主实现继续保持单文件交付。
@@ -67,32 +67,33 @@ git diff -- yuketang-ComplexAutomation.user.js README.md SystemPrompt.md AGENTS.
 rg -n '@version|Config.version' yuketang-ComplexAutomation.user.js
 ```
 
-- 若机主要求发布，由机主确定版本号；只修改 userscript 头部 `@version`。不要增加第二个硬编码版本。
-- 若仓库中已有 `LOG.md`，记录目标、结果、验证命令和实机字段。当前仓库没有 `LOG.md` 时，不因单个工作包自行创建，除非机主要求。
+- 版本号只修改 userscript 头部 `@version`。不要增加第二个硬编码版本。
+- 若仓库中已有 `LOG.md`，记录目标、结果、验证命令和实机字段。当前仓库没有 `LOG.md` 时，不因单个工作包自行创建，除非要求。
 - 完成后更新本文末尾的“完成记录”。提交说明用声明式表述。
 
 ## 工作包与状态
 
-状态含义：`待办` 可以直接开始；`阻塞` 需要实机样本或机主决定；`可选` 不属于当前缺陷修复范围。
+状态含义：`待办` 可以直接开始；`阻塞` 需要实机样本决定；`可选` 不属于当前缺陷修复范围。
 
-| 工作包                           |   AUDIT 项 | 状态 | 前置条件                                     |
-| -------------------------------- | ---------: | ---- | -------------------------------------------- |
-| A. 删除 V2Runner 旧内容处理簇    |       1、8 | 已完成 | 无                                           |
-| N. AI 拒答时通知来源目录跳过      | 机主实机提出 | 已改代码，待机主实机验证 | 需要一道会触发 refuse 的作业 |
-| B. 删除失效配置并修 README       | 2、3、4、7 | 待办 | 无                                           |
-| C. 同步答题 prompt               |          6 | 已完成 | 无                                           |
-| D. 让`Utils.poll()` 异常收敛   |          9 | 待办 | 无                                           |
-| E. 修判断题文本回退              |         11 | 待办 | 无                                           |
-| F. 显式区分答题提交结果          |         10 | 待办 | 提交回写已观测，见 `OBSERVE.md` 作业页「提交回写」一节                        |
-| G. 确认七项以上选项边界          |         12 | 阻塞 | 找到选项数 ≥ 7 的真实题目或平台约束证据     |
-| H. 修课件推进判定                |         13 | 阻塞 | 先确认课件是同页弹层还是新标签               |
-| I. 修课堂媒体等待                |         14 | 阻塞 | 先确认课堂入口、iframe、`ended` 和标签行为 |
-| J. 处理 Pro 路径与监听清理       |     15、17 | 阻塞 | 先确认`/pro/lms/*` 是否有用户级入口        |
-| K. 确认完成度阈值                |         16 | 阻塞 | 取得临近完成时的目录和内容页状态样本         |
-| L. 决定`gdufemooc.cn` 支持范围 |          5 | 阻塞 | 机主决定是否支持该站点                       |
-| M. 可读性与仓库卫生              |     第五节 | 可选 | A–L 完成后仍有明确收益再做                  |
+| 工作包                           |   AUDIT 项 | 状态                 | 前置条件                                                |
+| -------------------------------- | ---------: | -------------------- | ------------------------------------------------------- |
+| A. 删除 V2Runner 旧内容处理簇    |       1、8 | 已完成               | 无                                                      |
+| N. AI 拒答时通知来源目录跳过     |   实机提出 | 已改代码，待实机验证 | 需要一道会触发 refuse 的作业                            |
+| O. 讨论区自动回复退回框架        |   实机提出 | 已完成               | 无                                                      |
+| B. 删除失效配置并修 README       | 2、3、4、7 | 已完成               | 无                                                      |
+| C. 同步答题 prompt               |          6 | 已完成               | 无                                                      |
+| D. 让`Utils.poll()` 异常收敛   |          9 | 已完成               | 无                                                      |
+| E. 修判断题文本回退              |         11 | 已完成               | 无                                                      |
+| F. 显式区分答题提交结果          |         10 | 待办                 | 提交回写已观测，见`OBSERVE.md` 作业页「提交回写」一节 |
+| G. 确认七项以上选项边界          |         12 | 阻塞                 | 找到选项数 ≥ 7 的真实题目或平台约束证据                |
+| H. 修课件推进判定                |         13 | 阻塞                 | 先确认课件是同页弹层还是新标签                          |
+| I. 修课堂媒体等待                |         14 | 阻塞                 | 先确认课堂入口、iframe、`ended` 和标签行为            |
+| J. 处理 Pro 路径与监听清理       |     15、17 | 阻塞                 | 先确认`/pro/lms/*` 是否有用户级入口                   |
+| K. 确认完成度阈值                |         16 | 阻塞                 | 取得临近完成时的目录和内容页状态样本                    |
+| L. 决定`gdufemooc.cn` 支持范围 |          5 | 阻塞                 | 决定是否支持该站点                                      |
+| M. 可读性与仓库卫生              |     第五节 | 可选                 | A–L 完成后仍有明确收益再做                             |
 
-推荐顺序：A → B → C → D → E → F。G–L 按实机样本和机主决定解锁。M 不与缺陷修复混做。
+推荐顺序：A → B → C → D → E → F。G–L 按实机样本决定解锁。M 不与缺陷修复混做。
 
 ## A. 删除 V2Runner 旧内容处理簇
 
@@ -139,7 +140,7 @@ node --check yuketang-ComplexAutomation.user.js
 
 交棒回归已于同日实机执行（`ykt-ff`，班级 31317597，脚本 v1.3.2）：目录每轮只点一个未完成条目并交棒；新标签落在 ai-workspace 并处理该知识点；处理完由 `returnToSource` 把目录标签导航回目录、重扫续行；连续观察约 4 分钟，网页标签数恒为 2（目录 + 一个执行标签），无逐轮增长；目录未在 `HANDOFF` 后自我重载（FailGate 计数跨重载累计到上限后跳过该子项，正常推进到下一子项）。
 
-附带发现（不在本工作包范围，需机主决定）：`autoCommentItem` 删除后，`autoComment` 开关已没有任何发帖实现，开启时讨论子项只会空转 `maxAttempts` 轮后被跳过。
+附带发现（不在本工作包范围，需决定）：`autoCommentItem` 删除后，`autoComment` 开关已没有任何发帖实现，开启时讨论子项只会空转 `maxAttempts` 轮后被跳过。
 
 ## B. 删除失效配置并修 README
 
@@ -165,6 +166,24 @@ node --check yuketang-ComplexAutomation.user.js
 ```
 
 预期没有上述失效符号。检查 `Decipherer.start()` 仍在顶层文档和 iframe 启动路径执行；不要把反混淆改成可关闭功能。
+
+### 完成记录（2026-09-13）
+
+全部按范围执行，另修一处同类漂移：日志里「请在 [AI配置] 中填写有效的 API Key」改成「[模型设置]」。
+
+```sh
+$ rg -n 'aiMaxOutputTokens|forceSamplingParams|buildSamplingParams|deobfEnabled|fontDisabled' yuketang-ComplexAutomation.user.js README.md
+# 无输出（exit 1）
+$ node --check yuketang-ComplexAutomation.user.js   # 通过
+```
+
+`Decipherer.start()` 仍在 `boot()` 的 iframe 分支与主文档分支各调用一次；`Decipherer` 少了两个常真字段后，
+`main()` / `onRouteChange()` / MutationObserver 里的条件直接写死为常开，没有新增开关。
+
+README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面板按钮改为 `模型设置` / `清除失败记录` / `暂停`、
+「默认不发送 temperature 和 top_p，除非内部强制采样参数开关被启用」改为「不发送 `temperature` 与 `top_p`，由服务商默认值决定」。
+
+实机验证：纯删除 + 文案改动，反混淆与截图路径的实机表现不变；未单独跑 Firefox 复验。
 
 ## C. 同步答题 prompt
 
@@ -193,17 +212,17 @@ node --check yuketang-ComplexAutomation.user.js
 
 - 背景段补回「无法作答时必须如实返回 refuse 结果」；
 - JSON Schema 改为含 `refuse`，并加「type = refuse 时不输出 answers」；
-- 补齐示例 4 / 5 / 6（机主本轮改写的新正文）；
+- 补齐示例 4 / 5 / 6（本轮改写的新正文）；
 - 原有示例 1 的 CoT 文字与 md 对齐；
 
 方向相反的那一处，按原计划把代码里的说明补回了 md：`SystemPrompt.md` 的「输出约束」新增
 「如果模型或服务端支持 reasoning / thinking 字段，可以在该字段内部推理；最终 content 仍必须只包含 JSON 对象。」
-（机主若不需要这行，删 md 后同步删代码同位置即可）。
+（若不需要这行，删 md 后同步删代码同位置即可）。
 
 新增最小自测 `tmp/prompt-sync-check.cjs`：断言 md 正文（`<AI识图Prompt>` 区块内）与代码 `system` 数组逐行一致，
 本次输出 `OK: 93 行 prompt 与 SystemPrompt.md 逐行一致`。改完 prompt 后跑一次即可拦住再次漂移。
 
-模型实测（真实 refuse 返回）由机主在自己的 API 与题目上做；脚本侧处理 refuse 的路径未改动。
+模型实测（真实 refuse 返回）在自己的 API 与题目上做；脚本侧处理 refuse 的路径未改动。
 
 ## D. 让 `Utils.poll()` 异常收敛
 
@@ -216,6 +235,26 @@ node --check yuketang-ComplexAutomation.user.js
 至少覆盖三个结果：checker 成功返回 `true`、超时返回 `false`、checker 抛错后在有限时间内返回 `false`。可沿用 `tmp/decipherer-selftest.cjs` 的做法写一个最小 `assert` 自测，不引入测试框架。
 
 再跑一次目录页基础流程，确认现有 `Utils.poll()` 调用没有因返回语义变化而中断。
+
+### 完成记录（2026-09-13）
+
+`Utils.poll()` 的 `setInterval` 回调里先把 `checker()` 包进 `try/catch`：`checker` 抛错时打印
+`[poll] checker 抛错，按未满足返回 false: <err>`，`clearInterval` 后 `resolve(false)`，之后才走原有的
+`if (done)` 与超时判定。没有改 reject，也没有在调用点补 `try/catch`。
+
+最小自测 `tmp/poll-selftest.cjs`：直接从 userscript 抽出 `poll` 方法体执行（不与实现写两遍），覆盖四项——
+
+```sh
+$ node tmp/poll-selftest.cjs
+OK: poll 的 true / 超时 false / 抛错 false + 定时器清理四项均通过
+```
+
+第四项额外断言抛错后 interval 已清理（100 ms 内不再有 tick），避免「已 resolve 但定时器仍在跑」。
+
+语义变化的唯一分支是「checker 抛错」：原先 Promise 永不落定，现在立刻按未满足返回。各调用点拿到 `false` 后
+走的都是「未确认…，本轮不推进」路径，靠 `FailGate` 封顶，不会形成新的重载循环。
+
+目录页基础流程的实机复验（确认原有等待语义未变）由用户做。
 
 ## E. 修判断题文本回退
 
@@ -233,6 +272,28 @@ node --check yuketang-ComplexAutomation.user.js
 - 标准 JSON 输入不受影响。
 
 不要扩大成自然语言分类器。发现无法可靠分类的新表达时记录样本，再补最小规则。
+
+### 完成记录（2026-09-13）
+
+`parseAIAnswer` 的判断题回退改为先否定后肯定，肯定词集合不变，否定侧随后按机主指示收敛为 `/不|错|false|no/i`。没有扩成分类器。
+
+自测过程中发现同一段代码的第二个坑：裸 `true` / `false` 也是合法 JSON，`JSON.parse` 会成功但不带 `answers`，于是走 JSON 分支返回空 `answers`（原先表现为「未提取到答案」）。同一处收口：只有解析结果是对象时才走 JSON 分支，其余落到文本回退。这样「纯 JSON 路径」对真正的答案对象保持不变，裸布尔值改由文本回退判成对/错。
+
+```sh
+$ node tmp/parse-answer-selftest.cjs
+OK: 判断题回退 6 例肯定 / 8 例否定均正确，JSON 与其他题型回退未变
+```
+
+自测覆盖四组：肯定（`正确`/`对`/`true`/`yes`/`TRUE`/`答案为：正确`）、否定（`错误`/`错`/`false`/`no`/`不正确`/`不对`/`不是正确答案`）、JSON（含 ``` 围栏、无 `type` 时沿用传入题型、`refuse`）、其他题型回退（choice 取字母、fillblank 切分）。
+
+### 追加（2026-09-13）
+
+两处按同一规则收口：
+
+1. 否定标记统一为「不」（`/不|错|false|no/i`），不再逐个列举 `不正确` / `不对` / `不是`——凡是句子里出现「不」都按否定处理。
+2. `answerToIndices()` 的 `truefalse` 分支同样改为先否定后肯定：原先 `answers:["不正确"]` 会命中「对」映射到选项 0，现在映射到 1。该函数是 JSON 路径上的选项映射，本次改动只影响「答案文本含否定词」这一种输入，`A` / `B` / `对` / `错` 的映射不变。
+
+自测同时覆盖两个函数：`parseAIAnswer` 的肯定 / 否定 / JSON / 其他题型，`answerToIndices` 的选项映射（肯定与否定各一组）。
 
 ## F. 显式区分答题提交结果
 
@@ -350,6 +411,40 @@ node --check yuketang-ComplexAutomation.user.js
 - 媒体继续通过 `Player.prepareMedia()` 执行“真实静音后冻结”，`findPlayButton()` 不重新包含提示或音量图标。
 - iframe 中仍启动 `Decipherer`，截图 `onclone` 仍使用显式 CJK 字体并跳过 MathJax/KaTeX。
 - AI refuse 仍不选、不提交，记录 error 并等待 10 秒；随后经 `window.opener.sessionStorage` 把来源目录里该条目标成 `-2`（目录重扫时跳过，见工作包 N）。
+
+## O. 讨论区自动回复退回框架（机主实机提出）
+
+机主指示：自动回复图文与讨论区的具体代码删掉，只留框架并注释，未来结合 `askAI` 做回复。
+
+### 修改范围
+
+- 删除 `Store.getFeatureConf()` 的 `autoComment`、面板勾选框「自动回复图文与讨论区」及其读取/保存/`ui` 引用。
+- `V2Runner.handleBatch` 的讨论区分支去掉开关条件：`taolun` / `forum` 子项一律就地 `FailGate.skip` 并记日志，不交棒。
+- 在该分支上方留注释写清未来接 `askAI` 的流程（新标签读主题与楼层 → `askAI` 生成回复 → 填框提交 → `returnToSource`），并注明 `askAI` 目前只吃题目截图、需先扩展文本入参。
+- `README.md` 同步：功能列表说明讨论区自动回复尚未实现，「模型设置」不再列该开关。
+
+### 验证
+
+```sh
+rg -n 'autoComment|feature_auto_comment|featureAutoComment' yuketang-ComplexAutomation.user.js README.md
+node --check yuketang-ComplexAutomation.user.js
+```
+
+预期 userscript 与 README 无命中；`node --check` 通过；面板「自动化功能」只剩「自动作答作业与题目」，HTML 结构仍闭合。
+
+### 完成记录（2026-09-13）
+
+按范围执行：开关、面板勾选框与 `ui` 引用全部删除，讨论区分支改为无条件跳过，框架注释落在该分支上方。
+
+```sh
+$ rg -n 'autoComment|feature_auto_comment|featureAutoComment' yuketang-ComplexAutomation.user.js README.md
+# 无输出（exit 1）
+$ node --check yuketang-ComplexAutomation.user.js   # 通过
+```
+
+开关删除后，讨论区子项的行为不再取决于用户配置：一律 `FailGate.skip` + warning 日志，`handleBatch` 的返回语义（`return true`）与 v1.2.3 的关闭态一致。
+
+未跑 Firefox 复验：改的是跳过分支与面板结构，需机主在实机确认面板显示与讨论子项日志。
 
 ## 完成维护
 
