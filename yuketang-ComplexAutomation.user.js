@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.6
+// @version      2.0.7
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2426,17 +2426,28 @@
         );
         if (statusNode) return true;
       }
-      const disabledDoneButton = [
-        ...root.querySelectorAll('button, .el-button, [role="button"]'),
-      ].find(
-        (el) =>
-          this.isVisibleElement(el) &&
-          this.isDisabledElement(el) &&
-          /已完成|已作答|已提交|回答正确|回答错误|完成本题/.test(
-            this.normalizeText(el.innerText),
-          ),
-      );
-      if (disabledDoneButton) return true;
+      // 站点把作答状态写在提交控件的文案上（2026-09-13 实机）：未作答 → 不可点击的「提交」；
+      // 已作答未提交 → 「提交」变可点击；已提交 → 不可点击的「已提交」。
+      // 这个控件不在题面里（在题面所在容器/文档那一层），所以按层级向外找；
+      // 只认「已提交 / 已作答」这类专属措辞——拿「提交」是否 disabled 反推，会把未作答的题也当成已提交。
+      // 控件位置不固定（`autoSelectAndSubmit` 也要靠文档级兜底才找得到「提交」），所以容器、文档、题面逐层找。
+      const scopes = [
+        root.closest?.(".container-problem"),
+        root.ownerDocument,
+        root,
+      ].filter(Boolean);
+      for (const scope of scopes) {
+        const submittedControl = [
+          ...scope.querySelectorAll('button, .el-button, [role="button"]'),
+        ].find(
+          (el) =>
+            this.isVisibleElement(el) &&
+            /已提交|已作答|已完成|回答正确|回答错误|完成本题/.test(
+              this.normalizeText(el.innerText),
+            ),
+        );
+        if (submittedControl) return true;
+      }
       return false;
     },
     getExerciseActionButton(
@@ -4861,7 +4872,11 @@
           currentRoot,
           fingerprint,
         );
-        if (!moved) break;
+        if (!moved) {
+          // 最后一题本来就没有「下一题」（实测），推进不了就到此为止，属正常收尾
+          this.panel.log("没有可推进的下一题，本轮作业处理结束");
+          break;
+        }
       }
       return allSubmitted && didWork;
     }
