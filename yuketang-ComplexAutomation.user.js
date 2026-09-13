@@ -2913,7 +2913,7 @@
         chat_template_kwargs: { enable_thinking: false },
       };
     },
-    // 只吃截图：题型判定与选项数都不下发给模型（prompt 是固定 system 文本，见 buildPrompt 与 SystemPrompt.md）
+    // 只吃截图：题型判定与选项数都不下发给模型（prompt 是固定 system 文本，见 buildPrompt 与 SysPmt_Homework.md）
     async askAI(imageDataUrl) {
       const saved = Store.getAIConf();
       const API_KEY = saved.key;

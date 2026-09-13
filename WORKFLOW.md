@@ -47,7 +47,8 @@ rg -n '<本工作包涉及的符号>' yuketang-ComplexAutomation.user.js
 - 不收窄 `AUDIT.md` 第四节列出的防御性逻辑，除非已有可复现反例。
 - 行为、架构、路由、选择器、存储 key、AI 流程或核心符号变化时，同步更新 `AGENTS.md`。
 - 新的网页观测同步更新 `OBSERVE.md`。用户操作方式变化时同步更新 `README.md`。
-- `SystemPrompt.md` 是 prompt 源文本。修改 prompt 时，同次更新 `Solver.buildPrompt()`，两者不得漂移。
+- `SysPmt_Homework.md`（正文在 `<AI识图作业Prompt>` 标记之间）是作业答题的 prompt 源文本。修改 prompt 时，同次更新 `Solver.buildPrompt()`，两者不得漂移，改完跑 `node tmp/prompt-sync-check.cjs`。
+- `SysPmt_Discussion`（占位，尚无内容）预备作讨论区回复的 prompt 源；接入脚本时按同样的标记 + 同步检查方式办。
 
 ### 4. 验证并收尾
 
@@ -63,7 +64,7 @@ git diff --check
 提交前检查：
 
 ```sh
-git diff -- yuketang-ComplexAutomation.user.js README.md SystemPrompt.md AGENTS.md OBSERVE.md WORKFLOW.md
+git diff -- yuketang-ComplexAutomation.user.js README.md SysPmt_Homework.md AGENTS.md OBSERVE.md WORKFLOW.md
 rg -n '@version|Config.version' yuketang-ComplexAutomation.user.js
 ```
 
@@ -190,15 +191,15 @@ README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面�
 
 ### 修改范围
 
-以 `SystemPrompt.md` 为源：
+以 `SysPmt_Homework.md` 为源：
 
 - 把背景段的 `refuse` 规则写入 `Solver.buildPrompt()`；
 - JSON Schema 加入 `refuse`，并注明 `type = refuse` 时不输出 `answers`；
 - 把 refuse 示例写入代码 prompt；
-- 把代码中 reasoning / thinking 字段说明补回 `SystemPrompt.md`；
+- 把代码中 reasoning / thinking 字段说明补回 `SysPmt_Homework.md`；
 - 核对现有示例文字，不顺手改写未涉及内容。
 
-目标是两份 prompt 的有效正文逐字一致。`SystemPrompt.md` 外层的说明和 HTML 注释不属于下发正文。
+目标是两份 prompt 的有效正文逐字一致。`SysPmt_Homework.md` 外层的说明和 HTML 注释不属于下发正文。
 
 ### 验证
 
@@ -209,19 +210,19 @@ README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面�
 
 ### 完成记录（2026-09-13）
 
-已按 `SystemPrompt.md` 的正文重新生成 `Solver.buildPrompt()`：
+已按 `SysPmt_Homework.md` 的正文重新生成 `Solver.buildPrompt()`：
 
 - 背景段补回「无法作答时必须如实返回 refuse 结果」；
 - JSON Schema 改为含 `refuse`，并加「type = refuse 时不输出 answers」；
 - 补齐示例 4 / 5 / 6（本轮改写的新正文）；
 - 原有示例 1 的 CoT 文字与 md 对齐；
 
-方向相反的那一处，按原计划把代码里的说明补回了 md：`SystemPrompt.md` 的「输出约束」新增
+方向相反的那一处，按原计划把代码里的说明补回了 md：`SysPmt_Homework.md` 的「输出约束」新增
 「如果模型或服务端支持 reasoning / thinking 字段，可以在该字段内部推理；最终 content 仍必须只包含 JSON 对象。」
 （若不需要这行，删 md 后同步删代码同位置即可）。
 
-新增最小自测 `tmp/prompt-sync-check.cjs`：断言 md 正文（`<AI识图Prompt>` 区块内）与代码 `system` 数组逐行一致，
-本次输出 `OK: 93 行 prompt 与 SystemPrompt.md 逐行一致`。改完 prompt 后跑一次即可拦住再次漂移。
+新增最小自测 `tmp/prompt-sync-check.cjs`：断言 md 正文（`<AI识图作业Prompt>` 区块内）与代码 `system` 数组逐行一致，
+本次输出 `OK: 93 行 prompt 与 SysPmt_Homework.md 逐行一致`。改完 prompt 后跑一次即可拦住再次漂移。
 
 模型实测（真实 refuse 返回）在自己的 API 与题目上做；脚本侧处理 refuse 的路径未改动。
 

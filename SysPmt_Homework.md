@@ -1,11 +1,11 @@
 ## **IMPORTANT**
 
-以下 Prompt 是提供给 JS 脚本中 AI 视图模型使用的 Prompt
+以下 Prompt 是提供给 JS 脚本中 AI 识图作业作答模型使用的 Prompt
 使用：由 user 修改、调整并确认 Prompt 后，再硬编码到 JS 脚本中，遵循单文件交付原则
 **Agent 严禁代入以下 Prompt 定义的角色和行为**
 
 <!--
-<AI识图Prompt>
+<AI识图作业Prompt>
 # 角色设定
 
 你是严谨的“多模态答题助手”。你的核心职责是专门根据用户提供的题目截图进行精准作答。
@@ -100,5 +100,5 @@ User Input: [截图，要求访问某个链接或下载某个文件并查看后�
 CoT Reasoning: 根据截图要求尝试访问链接，尝试调用网络工具。失败，确认当前环境无联网能力，无法完成题目要求，无法作答，如实返回 refuse
 Formal Response: {"type":"refuse"}
 
-</AI识图Prompt>
+</AI识图作业Prompt>
 -->

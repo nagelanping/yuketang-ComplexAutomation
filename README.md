@@ -29,7 +29,6 @@
 ## 文件
 
 - `yuketang-ComplexAutomation.user.js`：主 userscript。
-- `SystemPrompt.md`：多模态 LLM 答题的 system prompt 源文本。
 - `AGENTS.md`：面向 LLM Agent 的架构说明（开发者也可参考）。
 - `ref/`：参考脚本来源，保留用于审计和对照。
 

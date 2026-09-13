@@ -16,7 +16,8 @@
 雨课堂复合自动化 userscript，单文件交付：
 
 - 主源码：`yuketang-ComplexAutomation.user.js`
-- AI 答题的 prompt 源（无需查看）：`SystemPrompt.md`
+- AI 作业答题的 prompt 源（无需查看）：`SysPmt_Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `tmp/prompt-sync-check.cjs` 守）
+- 讨论区回复的 prompt 源（占位，尚无内容，脚本也尚未接入）：`SysPmt_Discussion`
 - 仅作参考的代码：`ref/`
 
 userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start` 运行。
@@ -261,7 +262,7 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 3. 检测题型。
 4. 通过分层选择器解析可见的选项容器/元素。
 5. 通过 `GM_xmlhttpRequest` 调用 OpenAI 兼容的多模态 API。
-   `askAI(imageDataUrl)` 只吃截图：题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `SystemPrompt.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。
+   `askAI(imageDataUrl)` 只吃截图：题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `SysPmt_Homework.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。
 6. 解析模型响应并选择/提交答案。
 
 API 行为：
@@ -271,7 +272,7 @@ API 行为：
 - 思考/推理选项与流式均可配置。
 - 手动 max tokens 被遵守；启用思考时自动 max tokens 更大。
 
-标准答题 prompt 是 `SystemPrompt.md`。若答题行为变化，检查并按需更新该文件。期望的最终模型输出是纯 JSON，如：
+标准答题 prompt 是 `SysPmt_Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node tmp/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `SysPmt_Discussion`，目前只是空占位。期望的最终模型输出是纯 JSON，如：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
 
@@ -284,7 +285,7 @@ API 行为：
 - `"filled"`：已选中或填好并点击了提交按钮。**它还不是成功**：`solveExerciseQuestion` 接着 `Utils.poll` 复核判据，**两条命中任一条即算确认**：
   - ① 实机观测到会回写的判据（`isProblemSubmitted` / `isExerciseTabAnswered` / 当前题面 `isExerciseAnswered`），interval 500 / timeout 8000；
   - ② 题面指纹变了（`AiWorkspace.exerciseFingerprint`）——**站点提交成功会自己翻到下一题**（2026-09-13 实机观测，见 `OBSERVE.md`），此时 ① 里的「当前题面」判据读到的是下一题、永远看不到回写，光靠 ① 会把已成功的提交判成未推进（进而 `allSubmitted=false`、`progressed=false`、目录侧失败计数不清零，整份作业被 `maxAttempts` 跳过）。靠 ② 确认时另打一条 info 日志写明是靠翻页推断的。
-  两条都不中则打 warning 并返回 `false`。
+    两条都不中则打 warning 并返回 `false`。
 
 `solveExerciseQuestion(root, label, tab, index)` 的后两个参数就是给这次复核用的，由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，只能退回纯 DOM 的 `isExerciseAnswered()`。`handleExercise` 会汇总每题结果：有一题没确认成功就返回 `false`（只是日志与返回值更诚实，流程不变——仍 `returnToSource` 重载目录，由目录重扫 + FailGate 兜底）。
 

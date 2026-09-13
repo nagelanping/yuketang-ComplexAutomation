@@ -1,6 +1,6 @@
 # 项目审查报告（2026-09-13）
 
-范围：`yuketang-ComplexAutomation.user.js`（v1.3.2，单文件约 5190 行，其中 410KB 的 `MAP_DATA` 与 700 行面板模板占大头）、`SystemPrompt.md`、`README.md`、`AGENTS.md`、`OBSERVE.md`。`ref/` 只作参考，未提出修改。
+范围：`yuketang-ComplexAutomation.user.js`（v1.3.2，单文件约 5190 行，其中 410KB 的 `MAP_DATA` 与 700 行面板模板占大头）、`SysPmt_Homework.md`、`README.md`、`AGENTS.md`、`OBSERVE.md`。`ref/` 只作参考，未提出修改。
 
 方法：全文件通读 + 符号引用计数（`rg`）+ `ykt-ff`（marionette）实机核查，并与 `OBSERVE.md` 的实机记录对照。`node --check yuketang-ComplexAutomation.user.js` 通过。文中的页面结论都注明了核对方式；没核对的项标「待验证」。
 
@@ -18,7 +18,7 @@
 
 1. **V2Runner 里躺着一整簇交棒重构前的旧实现**，约 450 行，只有定义没有调用点，其中 `handleHomework` 还是「截图答题」的第二份实现。这是最大、最安全的一刀。
 2. **少量配置项和开关永远不会生效**（`Config.aiMaxOutputTokens`、`forceSamplingParams`、`Decipherer` 的两个常真开关、不可达的 `gdufemooc.cn` 分支），使用者改了也不会有任何效果。
-3. **`SystemPrompt.md` 与 `Solver.buildPrompt()` 已经双向漂移**，`README.md` 有若干处与实现相反。文档是使用者的操作依据，漂移的代价比代码脏更大。
+3. **`SysPmt_Homework.md` 与 `Solver.buildPrompt()` 已经双向漂移**，`README.md` 有若干处与实现相反。文档是使用者的操作依据，漂移的代价比代码脏更大。
 
 其余是若干可以从代码直接确认的逻辑边界问题（`Utils.poll` 不收敛、成功/失败返回值不分、课件成功判定漏洞等），逐条列在第三节，其中涉及网页行为的都标注了必须先实机验证。
 
@@ -70,11 +70,11 @@
 
 ## 二、文档与代码漂移
 
-### 6. `shrink:` `SystemPrompt.md` 与 `Solver.buildPrompt()` 已双向不一致
+### 6. `shrink:` `SysPmt_Homework.md` 与 `Solver.buildPrompt()` 已双向不一致
 
-单文件交付决定了 prompt 必须硬编码进脚本，但 `SystemPrompt.md` 被定位为源文本，两者现在各缺一块：
+单文件交付决定了 prompt 必须硬编码进脚本，但 `SysPmt_Homework.md` 被定位为源文本，两者现在各缺一块：
 
-| 位置                 | `SystemPrompt.md`                                    | `Solver.buildPrompt()`                                   |
+| 位置                 | `SysPmt_Homework.md`                                    | `Solver.buildPrompt()`                                   |
 | -------------------- | ------------------------------------------------------ | ---------------------------------------------------------- |
 | 背景段的 refuse 说明 | 有（「必须如实返回 refuse」）                          | **缺**                                               |
 | JSON Schema          | 含`refuse`，并注明「type = refuse 时不输出 answers」 | **缺**（只列四种题型）                               |
@@ -83,7 +83,7 @@
 
 后果：`parseAIAnswer` 与 `autoSelectAndSubmit` 的 refuse 分支（跳过、不选不提交、10 秒后继续）依赖模型自发输出 `{"type":"refuse"}`，而当前下发的 prompt 完全没告诉模型可以这样返回。这是行为与文档脱节，不只是文案问题。
 
-建议：以 `SystemPrompt.md` 为准把 refuse 那段回写进 `buildPrompt()`（`SystemPrompt.md` 的 refuse 内容是最近的刻意改动，代码侧是漏同步的一方），并把代码里那句 reasoning 说明补回 md，保持两者逐字一致。改完请在实机题目上验一次乱码/超纲题的返回，确认模型确实走 refuse 分支。
+建议：以 `SysPmt_Homework.md` 为准把 refuse 那段回写进 `buildPrompt()`（`SysPmt_Homework.md` 的 refuse 内容是最近的刻意改动，代码侧是漏同步的一方），并把代码里那句 reasoning 说明补回 md，保持两者逐字一致。改完请在实机题目上验一次乱码/超纲题的返回，确认模型确实走 refuse 分支。
 
 ### 7. `shrink:` `README.md` 已与实现相反
 
@@ -211,7 +211,7 @@
 
 1. **删死代码**：V2Runner 旧内容处理簇（第 1 条）→ 随后必须做一次 `ykt-ff` 目录页全流程回归（交棒 / 回目录 / 重扫 / 标签数稳定）。
 2. **清死配置**：`aiMaxOutputTokens`、`forceSamplingParams`、`Decipherer` 两个常真开关（第 2–4 条），顺带修 README 对应段落（第 7 条）。
-3. **同步 prompt**：`SystemPrompt.md` ↔ `Solver.buildPrompt()`（第 6 条），并在一个真实题目上验证 refuse 分支。
+3. **同步 prompt**：`SysPmt_Homework.md` ↔ `Solver.buildPrompt()`（第 6 条），并在一个真实题目上验证 refuse 分支。
 4. **修共用基础设施**：`Utils.poll()` 异常收敛、`autoSelectAndSubmit()` 返回值显式化（第 9–10 条）。第 10 条改前需先观察作业提交回写。
 5. **实机验证后再动**：课件（第 13 条）、课堂（第 14 条）、Pro 路由存废（第 15、17 条）、完成度阈值（第 16 条）。这四项只记录结论、不预改代码；清单与 `OBSERVE.md` 文末的「仍待实机验证」保持同一份。
 6. **最后**：删死代码时同步删掉 `AGENTS.md` 里那段死代码说明（第 8 条），并核对「代码导航」里的锚点仍能命中。
