@@ -238,7 +238,7 @@ API 行为：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
 
-`type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 立即返回 `"refused"` 且**不选选项、不点提交**；调用方据此跳过该题（`solveExerciseQuestion` 返回 false，有题号列表的循环 `break` 到下一题），并在面板日志留下记录，等人工处理。
+`type: "refuse"` 表示 AI 判定无法作答（题面乱码，或要求联网/访问文件等它做不到的事），此时不带 `answers`。`parseAIAnswer` 把它归一为 `type: "refuse"`，`autoSelectAndSubmit` 记 **error** 日志、提示需要人工介入、**暂停 10 秒**后返回 `"refused"`，且**不选选项、不点提交**；调用方据此跳过该题并继续下一题（`solveExerciseQuestion` 返回 false，有题号列表的循环 `break`）。
 
 ## 编辑规则
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      1.3.1
+// @version      1.3.2
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -3189,7 +3189,11 @@
       const parsed = this.parseAIAnswer(aiResponse, questionType);
 
       if (parsed.type === "refuse") {
-        panel.log("AI 拒绝作答，不选不提交，留待人工处理", "warning");
+        panel.log(
+          "AI 判定无法作答（题面乱码或超出能力），需要人工介入；10 秒后自动跳过本题",
+          "error",
+        );
+        await Utils.sleep(10000);
         return "refused";
       }
       if (questionType === "fillblank") {
@@ -4078,7 +4082,7 @@
             );
             const result = await Solver.autoSelectAndSubmit(aiText, targetEl);
             if (result === "refused") {
-              this.panel.log(`第 ${i + 1} 题无法作答，跳过（请人工检查）`, "warning");
+              this.panel.log(`第 ${i + 1} 题无法作答，已跳过并继续下一题（请人工检查）`, "error");
               break;
             }
             const saved = await Utils.poll(
@@ -4893,8 +4897,8 @@
           const result = await Solver.autoSelectAndSubmit(aiText, questionRoot);
           if (result === "refused") {
             this.panel.log(
-              `${label || "当前题目"} 无法作答，跳过（请人工检查）`,
-              "warning",
+              `${label || "当前题目"} 无法作答，已跳过并继续下一题（请人工检查）`,
+              "error",
             );
             return false;
           }
