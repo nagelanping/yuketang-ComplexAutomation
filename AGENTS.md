@@ -49,7 +49,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - 启动链：
   `rg -n "function boot|function start|function createPanel" yuketang-ComplexAutomation.user.js`
 - 核心单例：
-  `rg -n "const Config|const Utils|const Store|const FailGate|const PauseGate|const Player|const AiWorkspace|const Solver" yuketang-ComplexAutomation.user.js`
+  `rg -n "const Config|const Utils|const Store|const FailGate|const PauseGate|const Player|const AiWorkspace|const Solver|const Decipherer" yuketang-ComplexAutomation.user.js`
 - 路由 runner：
   `rg -n "class V2Runner|class ProOldRunner|class ProNewRunner|class AiWorkspaceRunner" yuketang-ComplexAutomation.user.js`
 - ai-workspace 叶子遍历：
@@ -194,6 +194,26 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 
 起播静音与「解除静音看门狗」：网站播放器有解除静音看门狗（`timeupdate.volume` 起 1s 定时器，见 `muted` 即强制 `video.muted=false`）。仅设 `media.muted=true` 会在 1 秒内被还原，随后无用户激活的有声播放被浏览器暂停 → 视频卡住。`Player.prepareMedia` 的做法是先真实静音（媒体内部 `muted` 置真，自动播放策略查真实状态而非 JS getter），再用 `Object.defineProperty(media,'muted',{get:()=>true,set:()=>{}})` 冻结属性，令看门狗的赋值变 no-op（`OBSERVE.md` 已实测此序列可连续播放，`freezeMuted` 幂等、`__yktMutedFrozen` 只冻结一次）。副作用：脚本接管的媒体全程静音。`AiWorkspace.keepAlive` 也走 `Player.prepareMedia` 以获得同样冻结，勿再手动逐个赋值 `muted/volume`。
 
+## Decipherer（字体反混淆）
+
+雨课堂用 PUA 混淆码点 + 子集字体（`exam-data-decrypt-font`）渲染中文：DOM 文本是混淆码点，浏览器靠该字体显示成正常字形，但 `html2canvas` 截图会把 PUA 码点渲染成乱码、复制文本也是乱码。`Solver` 截图因此依赖反混淆。
+
+`Decipherer`（移植自 `ref/yuketang-deobfuscator`，保留其原设计、去除调试/菜单/持久化）在 `boot` 时常开（`Decipherer.start()`），把 DOM 文本还原为真实中文，截图/复制随之正常：
+
+- 内嵌 gzip base64 映射表 `MAP_DATA`：字形 SHA-1 前 8 字节 -> 真实 CJK 码点（CJK 扩展 A）。
+- 从页面 `<style>`/`CSSFontFaceRule` 取混淆字体 URL，`GM_xmlhttpRequest` 下载、`opentype.parse` 解析。
+- 对每个 CJK 字形算 `SHA-1(path.commands)` 查表，建「混淆码点 -> 真实码点」映射。
+- 仅替换 `.xuetangx-com-encrypted-font`（或 computed font-family 命中）元素内文本节点；`disableObfuscatedFont` 注入覆盖 `@font-face` + 禁用相关 `<style>` + `document.fonts.delete`，令其回退系统字体。
+- `MutationObserver`（childList/attributes/characterData）对 SPA 新内容实时解码；`history.pushState/replaceState`/`popstate` 触发重扫；字体 URL 未出现时 `startFontUrlRetry` 轮询（≤30 次）。
+
+依赖 `@require opentype.js`（1.3.4）。无手动开关：截图答题依赖解码，常开。
+
+题目实际跑在 iframe（`v2/web/iframe-exercise`，`#iframeExerciseId`）里，所以 `boot()` 在 `Utils.inIframe()` 分支也调用 `Decipherer.start()` 后再早退——否则反混淆在 iframe 内不执行，题目文本仍是混淆码点（复制/截图乱码）。
+
+`html2canvas` 不信任浏览器字体回退：它自行扫描 `@font-face` 并加载 `exam-data-decrypt-font`，用混淆字形渲染已解码的真实码点（表现为部分汉字与标点乱码）。因此解码后 `stripFontFamily` 把该字体从混淆元素（及 characterData 路径的父元素）的 `font-family` 中移除，断掉 html2canvas 的字体来源。页面另有一条跨域 CSS 里（JS 读不到 `cssRules`）的 `!important` font-family 规则强制 exam 字体，普通 inline 压不过，所以 `stripFontFamily` 必须用 inline `!important`（`setProperty(..., "important")`）。
+
+截图乱码的真正根因：`html2canvas` 用 canvas 渲染文本，而 **Firefox canvas 对通用族 `sans-serif`（以及不含 CJK 字体名的字体栈）的 CJK 回退会命中页面加载的雨课堂混淆字体**，把已解码的真实码点渲染成混淆字形；浏览器 DOM 走 fontconfig 回退所以显示正常——两条路径不同，这解释了「页面显示/复制正常、但脚本截图乱码，且字体文件每次刷新都变而错字固定」。修复：`Solver.captureQuestionImage` 在 html2canvas 的 `onclone` 里，对每个元素移除通用族与 `exam-data-decrypt-font`、追加显式 CJK 字体（`"Microsoft YaHei", "PingFang SC", …`），并跳过 MathJax/KaTeX 元素以保护公式。注意 CJK 字体名必须排在通用族之前，否则仍会命中异常回退。
+
 ## Solver
 
 `Solver` 负责基于截图的多模态答题。
@@ -246,3 +266,6 @@ API 行为：
 - 图文 / 讨论（`tuwen`/`taolun`）子项现走交棒，但新标签的 `AiWorkspaceRunner` 不处理评论类型 → 未发言条目开 `maxAttempts` 轮后被 `FailGate` 跳过、永不完成，面板「自动评论」开关对这类已失效。要恢复须在新标签侧接住讨论类型并发言，否则应移除该开关与 `autoCommentItem`。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
 - `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；若课件其实是同页弹层却被误判为未找到，会出现该项反复跳，需回来放宽判据。
+- `html2canvas` 截图把中文渲染成乱码的根因是雨课堂 PUA 混淆字体（DOM 文本是混淆码点），不是截图代码或图片本身；修复靠 `Decipherer` 把 DOM 还原为真实中文后再截，不要试图在截图侧修字体。
+- 题目（exercise）跑在 `#iframeExerciseId` iframe（`v2/web/iframe-exercise`）内，主文档既没有题目 DOM 也没有混淆字体；`boot()` 的 `if (Utils.inIframe()) return;` 早退会让 `Decipherer` 不在 iframe 内运行，反混淆失效（DOM 仍是混淆码点、复制与截图乱码）。反混淆必须在 iframe 分支里先启动。
+- 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
