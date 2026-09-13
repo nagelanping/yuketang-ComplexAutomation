@@ -2,7 +2,13 @@
 
 本文件为编码代理提供本仓库的项目专属规则。
 
-项目根目录还有其他 .md 文档（AI prompt、实机行为记录、协同方法等）。开始工作前先阅读项目里已有的 .md 文件，了解背景与当前状态。
+项目根目录还有其他 .md 文档，开始工作前先读一遍：
+
+- `SystemPrompt.md`：AI 答题 prompt 的源文本。它要硬编码进脚本（单文件交付），改完必须与 `Solver.buildPrompt()` 逐字对齐。
+- `OBSERVE.md`：雨课堂**实机行为记录**（按路由分节）＋文末「脚本缺陷存档」。涉及网页行为的判断以它为准，新观测回填这里。该文件被 `.gitignore` 忽略，属本地工作笔记。
+- `FIREFOX.md`：人机协同的 Firefox 实机检测方法（`ykt-ff` CLI 用法与注意）。同样被忽略。
+- `AUDIT.md`：阶段性审查报告与修改建议，文末有「待实机验证」清单；动相关代码前先看它。
+- `ref/`：参考脚本，只作审计/对比。
 
 ## 项目
 
@@ -25,6 +31,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - 运行时验证靠手动：
   在 Tampermonkey 或兼容管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
 - 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。用 `ykt-ff-start` 启动，用 `ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
+  多标签时 `ykt-ff` 只作用于活动标签，先 `ykt-ff tabs` 看清、再 `ykt-ff tab <idx>` 切换；句柄顺序在不同会话间不稳定，`tab <idx>` 可能落到 `(privileged)` 窗口并报 `ExecuteScript ... not supported for privileged browsing contexts`。细节见 `FIREFOX.md`。
 
 若某次任务只改了文档或 prompt，请说明 `node --check` 是否没有必要。
 
@@ -62,6 +69,10 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
   `rg -n "FailGate\\.|ykt_fail_counts|clearPendingAutoStart" yuketang-ComplexAutomation.user.js`
 - AI 答题管线：
   `rg -n "captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt" yuketang-ComplexAutomation.user.js`
+- 题目文档与 iframe 跨越：
+  `rg -n "getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId" yuketang-ComplexAutomation.user.js`
+- Pro 旧版游标与路由：
+  `rg -n "getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount" yuketang-ComplexAutomation.user.js`
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -96,6 +107,8 @@ UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单
 
 V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 
+页面事实（2026-09-13 复查）：`.logs-list` 与各 `section.studentCard` 都在**主文档**；主文档另有一个隐藏（宽高 0）的 `iframe.tab-pane-content-iframe`，其 `src` 指向 `/pro/lms/{token}/{classroom_id}/studycontent?...`——`/pro/lms/*` 仍被站点引用，但不构成 V2 目录遍历路径。详见 `OBSERVE.md`。
+
 每轮 `V2Runner.run()`：
 
 1. 调用 `autoSlide()` 触发懒加载。
@@ -118,6 +131,8 @@ V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 
 V2 条目进入有意保持 KISS：目录只负责「点一个未完成条目 → 交棒 → 停手」，实际的媒体播放 / 答题在被打开的新标签里由 `AiWorkspaceRunner` 完成，再回到目录重扫。**不要改回「点击后在当前目录文档里找 `video` / 作业元素并就地处理」**——站点点击目录项会新开标签，目录文档里没有这些元素，旧做法正是「未找到元素 → 重载 → 再点 → 标签无限增长」死循环的根因。也不要为交棒加基于 focus / visibility 的停止逻辑；目录只认 `HANDOFF` 这一种信号。
 
+交棒重构前的那套同文档实现**仍以死代码形式留在 `V2Runner` 里**：`handleVideo`、`playCurrentVideoUntilProgressDone`、`playAudioItem`、`playVideoItem`、`autoCommentItem`、`handleHomework`、`waitForMediaElement`，全仓库没有任何调用点。它们不代表当前行为——不要照抄其中任何一个去恢复就地处理，也不要因为看到它们而以为交棒只在部分路径生效。清理建议见 `AUDIT.md` 第 1 条。
+
 V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceRunner.handleMedia` 负责起播与刷到完成，进度以重载后目录 DOM 的服务器端状态为准。
 交棒的可靠性：目录交棒后不再自我重载，完全依赖新标签的 `returnToSource` 把目录重载。因此 `AiWorkspaceRunner.run()` 用 try/catch 兜住知识点处理，任何抛错都要继续走到 `autoSelect()`，否则目录会永久停等。FailGate 在目录侧 `openContentEntry` 里 bump，跨「子标签回目录重载」的多次尝试累计，满 `maxAttempts` 后跳过该项；新标签自身不持有跨重载的闸门（其 `_lastAdvanceIndex` 只在直接在本页启动逐项刷时生效）。
 
@@ -138,6 +153,8 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - 最后看文字：`已完成` / `已读` 表示已完成；`进行中` 表示进行中；其他文字默认未开始。
 
 这个优先级用于处理混合 UI 文本，如 `1% 进行中` 或 `3/6 进行中`。
+
+另有一套口径 `Utils.isProgressDone`（`98%`/`99%`/`100%`/`已完成` 都算完成），用于内容页自查与 Pro 路径。两者一个面向目录状态、一个面向内容页，天然可能不同步（「内容页认为完成、目录页仍认为未完成」）；不要为了「统一」直接把阈值改成同一个数，先取实机样本，见 `AUDIT.md` 第 16 条。
 
 ## 批次数
 
@@ -196,19 +213,22 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 
 ## Decipherer（字体反混淆）
 
-雨课堂用 PUA 混淆码点 + 子集字体（`exam-data-decrypt-font`）渲染中文：DOM 文本是混淆码点，浏览器靠该字体显示成正常字形，但 `html2canvas` 截图会把 PUA 码点渲染成乱码、复制文本也是乱码。`Solver` 截图因此依赖反混淆。
+雨课堂用**子集字体做字形置换**：DOM 文本是 CJK 基本区的码点，页面用混淆字体（CSS 名 `exam-data-decrypt-font`）把这些码点渲染成**另一套字形**——看着是正常汉字，实际是错字。因此**复制文本得到的是错字**，`html2canvas` 截图同样渲染成错字。`Solver` 截图答题依赖反混淆。
+
+实测依据（2026-09-13，见 `OBSERVE.md` 作业页章节）：`buildMapping()` 只处理 `0x4e00–0x9fff` 的字形码点；实机 `exam_font_{hash}.ttf` 的 cmap 882 个码点全落在该区、PUA 计数为 0；字体按页面用字子集化，URL 每次加载都不同。
+（早期文档写的「PUA 混淆码点」与当前实现不符：`buildMapping` 的码点过滤、实测 cmap 都不支持 PUA 形态。）
 
 `Decipherer`（移植自 `ref/yuketang-deobfuscator`，保留其原设计、去除调试/菜单/持久化）在 `boot` 时常开（`Decipherer.start()`），把 DOM 文本还原为真实中文，截图/复制随之正常：
 
-- 内嵌 gzip base64 映射表 `MAP_DATA`：字形 SHA-1 前 8 字节 -> 真实 CJK 码点（CJK 扩展 A）。
-- 从页面 `<style>`/`CSSFontFaceRule` 取混淆字体 URL，`GM_xmlhttpRequest` 下载、`opentype.parse` 解析。
-- 对每个 CJK 字形算 `SHA-1(path.commands)` 查表，建「混淆码点 -> 真实码点」映射。
+- 内嵌 gzip base64 映射表 `MAP_DATA`：字形 SHA-1 前 8 字节 -> 真实 CJK 码点（解码基址 `0x3400`，实测落点在 CJK 基本区）。
+- 从页面 `<style>`/`CSSFontFaceRule` 取混淆字体 URL（`https://fe-static-yuketang.yuketang.cn/fe_font/product/exam_font_{hash}.ttf`，每次加载不同），`GM_xmlhttpRequest` 下载、`opentype.parse` 解析。
+- 对字体里每个 CJK 字形（码点限 `0x4e00–0x9fff`）算 `SHA-1(path.commands)` 查表，建「（被置换的）错位码点 -> 真实码点」映射。
 - 仅替换 `.xuetangx-com-encrypted-font`（或 computed font-family 命中）元素内文本节点；`disableObfuscatedFont` 注入覆盖 `@font-face` + 禁用相关 `<style>` + `document.fonts.delete`，令其回退系统字体。
 - `MutationObserver`（childList/attributes/characterData）对 SPA 新内容实时解码；`history.pushState/replaceState`/`popstate` 触发重扫；字体 URL 未出现时 `startFontUrlRetry` 轮询（≤30 次）。
 
 依赖 `@require opentype.js`（1.3.4）。无手动开关：截图答题依赖解码，常开。
 
-题目实际跑在 iframe（`v2/web/iframe-exercise`，`#iframeExerciseId`）里，所以 `boot()` 在 `Utils.inIframe()` 分支也调用 `Decipherer.start()` 后再早退——否则反混淆在 iframe 内不执行，题目文本仍是混淆码点（复制/截图乱码）。
+题目实际跑在 iframe（`/v2/web/iframe-exercise/{classroom_id}/{leaf_id}?noLeftMenu=1…`，`#iframeExerciseId`）里，所以 `boot()` 在 `Utils.inIframe()` 分支也调用 `Decipherer.start()` 后再早退——否则反混淆在 iframe 内不执行，题目文本仍是错字（复制/截图都不对）。主文档既没有题目 DOM，也没有那个混淆字体。
 
 `html2canvas` 不信任浏览器字体回退：它自行扫描 `@font-face` 并加载 `exam-data-decrypt-font`，用混淆字形渲染已解码的真实码点（表现为部分汉字与标点乱码）。因此解码后 `stripFontFamily` 把该字体从混淆元素（及 characterData 路径的父元素）的 `font-family` 中移除，断掉 html2canvas 的字体来源。页面另有一条跨域 CSS 里（JS 读不到 `cssRules`）的 `!important` font-family 规则强制 exam 字体，普通 inline 压不过，所以 `stripFontFamily` 必须用 inline `!important`（`setProperty(..., "important")`）。
 
@@ -247,6 +267,7 @@ API 行为：
 - 新增源文件时保留 GPL-3.0-only 头与 SPDX 标识。
 - 新增 AI provider 域名时，检查 `@connect` 附近的 userscript 元数据；当前元数据已含通配 `@connect *`。
 - 修改 DOM 选择器前先确定目标路由：V2、Pro、ai-workspace 结构各不相同。
+- 涉及网页行为的改动（选择器、路由、点击后的页面跳转、媒体/播放器行为）必须先按 `FIREFOX.md` 实机验证，再把观测回填 `OBSERVE.md`；验证不到的部分在文档里标「待验证」，不要用静态推断替代观测。
 - 保持 V2 不变量：handler 要么回到目录/重载流程，要么显式继续扫描。不要引入 localStorage 进度游标。
 - 当改动涉及行为、架构、验证、路由、存储 key、AI 流程、选择器或本文件描述的其他内容时，在同一次改动中更新对应的 `AGENTS.md` 章节。
 - 交付中不编辑 `ref/`。
@@ -265,9 +286,10 @@ API 行为：
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
 - 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
 - `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
-- 图文 / 讨论（`tuwen`/`taolun`）子项现走交棒，但新标签的 `AiWorkspaceRunner` 不处理评论类型 → 未发言条目开 `maxAttempts` 轮后被 `FailGate` 跳过、永不完成，面板「自动评论」开关对这类已失效。要恢复须在新标签侧接住讨论类型并发言，否则应移除该开关与 `autoCommentItem`。
+- 讨论（`taolun`/`forum`）子项只在 `autoComment === false` 时才在 `handleBatch` 里就地 `FailGate.skip`（v1.2.3 起，避免「交棒→新标签不处理→关标签→再交棒」空转）；**开启**自动评论时仍会交棒进论坛页，而新标签的 `AiWorkspaceRunner` 不处理评论类型 → 空转 `maxAttempts` 轮后被 `FailGate` 跳过、条目永不完成。要恢复须在新标签侧接住评论类型并发帖，否则应移除该开关与已无调用点的 `autoCommentItem`。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
-- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；若课件其实是同页弹层却被误判为未找到，会出现该项反复跳，需回来放宽判据。
-- `html2canvas` 截图把中文渲染成乱码的根因是雨课堂 PUA 混淆字体（DOM 文本是混淆码点），不是截图代码或图片本身；修复靠 `Decipherer` 把 DOM 还原为真实中文后再截，不要试图在截图侧修字体。
-- 题目（exercise）跑在 `#iframeExerciseId` iframe（`v2/web/iframe-exercise`）内，主文档既没有题目 DOM 也没有混淆字体；`boot()` 的 `if (Utils.inIframe()) return;` 早退会让 `Decipherer` 不在 iframe 内运行，反混淆失效（DOM 仍是混淆码点、复制与截图乱码）。反混淆必须在 iframe 分支里先启动。
+- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 在既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `AUDIT.md` 第 13 条）。
+- `html2canvas` 截图把中文渲染成错字，根因是页面加载的混淆字体（DOM 文本被该字体做了字形置换），不是截图代码或图片本身；修复靠 `Decipherer` 先把 DOM 还原为真实中文，再在截图 `onclone` 里换掉字体栈。只改 `@font-face` 不管用。
+- 题目（exercise）跑在 `#iframeExerciseId` iframe（`/v2/web/iframe-exercise/…`）内，主文档既没有题目 DOM 也没有混淆字体；若在 iframe 分支直接 `return`，`Decipherer` 不会在 iframe 内运行，反混淆失效（DOM 仍是错字，复制与截图都不对）。反混淆必须在 iframe 分支里先启动。
 - 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
+- `Utils.poll()` 的 checker 抛异常时 Promise **永不落定**：超时判定与 `clearInterval` 都在 checker 之后，`setInterval` 回调抛出后不会再走到。写 checker 时避免访问可能已卸载节点的属性，或等内容层加上 try/catch（见 `AUDIT.md` 第 9 条）。
