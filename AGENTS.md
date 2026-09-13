@@ -55,7 +55,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - ai-workspace 叶子遍历：
   `rg -n "autoSelect|handleNext|getAllScourse|_lastAdvanceIndex|nav-item-leaf-box" yuketang-ComplexAutomation.user.js`
 - V2 遍历与返回行为：
-  `rg -n "async run\\(\\)|returnToList|handleBatch|handleVideo|handleHomework|handleCourseware" yuketang-ComplexAutomation.user.js`
+  `rg -n "async run\\(\\)|returnToList|openContentEntry|HANDOFF|handleBatch|handleClassroom|handleCourseware" yuketang-ComplexAutomation.user.js`
 - 完成状态逻辑：
   `rg -n "getCompletionState|isProgressDone|statistics-box \\.aside" yuketang-ComplexAutomation.user.js`
 - FailGate 用法：
@@ -102,20 +102,24 @@ V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 2. 按 DOM 顺序扫描 `.logs-list` 的顶层子项。
 3. 就地跳过有意不进入的条目（考试、未知类型、被禁用的顶层作业等）。这些条目不得调用 `returnToList()` 或点击目录项。
 4. 选取第一个满足「`getCompletionState(...)` 不是 `completed`，且 FailGate key 既未跳过也未耗尽」的条目。
-5. 分发一个 handler。
-6. handler 处理一个条目，并返回本轮是否有进展。
-7. `returnToList()` 先用站点自身的历史栈返回目录并等待 `.logs-list`；目录可见后重载目录页，使下一轮扫描读到最新的服务器端进度。
-8. `boot()` 看到匹配的 `pendingAutoStart`，从 `sessionStorage` 恢复面板日志，并启动下一个单条目循环。
+5. 分发一个 handler：
+   - 内容条目（视频 / 顶层作业）：`openContentEntry(course, failKey)` —— 点击目录项后站点**新开标签**（焦点跟随、目录标签原地不动、新标签落在 ai-workspace 路由、`window.opener` 指回目录）处理该知识点。目录标签只点一次、`FailGate.bump` 一次，然后返回特殊值 `HANDOFF`。
+   - 批次：`handleBatch` 就地展开（站点在目录内发 XHR 渲染子项，不新开标签），定位第一个未完成子项后同样 `openContentEntry(item, subKey)` 交棒（重置父 key、bump 子 key）。
+   - 课堂 / 课件概况（`handleClassroom` / `handleCourseware`）：仍是同页 iframe / 弹层内联处理（未实测确认这类会不会也新开标签，保留原路径）。
+6. `run()` 收到 `HANDOFF` 时**直接 return，不调用 `returnToList()` 也不重载目录**——重载会再次点击又开一个新标签（旧死循环根因）。
+7. 被交棒的新标签由 `AiWorkspaceRunner` 处理该知识点，`autoSelect()` 见 `returnUrl` 非空即 `returnToSource()`：用 `window.opener` 把目录标签导航回目录 URL，并 `window.close()` 自身。
+8. 目录被重载后 `boot()` 看到匹配 `pendingAutoStart`，从 `sessionStorage` 恢复面板日志，重启 `V2Runner.run()` 重扫——该项进度已在服务器端更新，跳过并推进下一项。
 
-`V2Runner.run()` 是单条目循环体，不是长期运行的内存遍历。handler 返回目录或重载目录后，不得继续处理第二个内容条目。也就是说：进度之所以推进，是因为重载后服务器端 DOM 状态变了，而不是脚本记住了「下一个索引」。
+`V2Runner.run()` 是单条目循环体，不是长期运行的内存遍历。一次 `run()` 只交棒一个内容条目（`HANDOFF`）或处理一个内联条目（课堂 / 课件），之后要么停下等新标签回目录重载、要么 `returnToList()` 重载目录，绝不继续处理第二个内容条目。进度之所以推进，是因为重载后服务器端 DOM 状态变了，而不是脚本记住了「下一个索引」。
 
-启动时向 `pendingAutoStart` 写入 `{classroomId, returnUrl}`。它记录从哪里恢复，而不是从哪个条目恢复。
+启动时向 `pendingAutoStart` 写入 `{classroomId, returnUrl}`。它记录从哪里恢复，而不是从哪个条目恢复。TTL 4 小时（见 `Store.getPendingAutoStart`），目录每条目重载都会续约 `ts`；须大于单条目播放上界，否则长视频交棒后新标签拿不到 `returnUrl`。
 
 `returnToList()` 重载或导航后抛出 `NavigationStop`；`runRoute(...)` 捕获这个内部控制流异常。保留这个模式，让旧的 async 栈在导航后立即停止，而不是继续改动 FailGate 或 UI 状态。
 
-V2 条目进入有意保持 KISS：通过站点 UI 点击目录项，处理随后产生的站点内页面状态，返回目录，然后重扫服务器端 DOM 进度。不要为 V2 目录项加「新页面交接」状态或基于 focus/visibility 的停止逻辑；雨课堂经常在同一 web app/历史栈内切换视图，强制 URL 导航可能破坏其返回行为。
+V2 条目进入有意保持 KISS：目录只负责「点一个未完成条目 → 交棒 → 停手」，实际的媒体播放 / 答题在被打开的新标签里由 `AiWorkspaceRunner` 完成，再回到目录重扫。**不要改回「点击后在当前目录文档里找 `video` / 作业元素并就地处理」**——站点点击目录项会新开标签，目录文档里没有这些元素，旧做法正是「未找到元素 → 重载 → 再点 → 标签无限增长」死循环的根因。也不要为交棒加基于 focus / visibility 的停止逻辑；目录只认 `HANDOFF` 这一种信号。
 
-V2 视频每轮都从头重放。视频轮次只有在页面进度文本确认完成后才算进展。若播放到结尾但进度文本未更新，返回目录重新扫描，但仍让 FailGate 为这轮未确认计数，这样服务器端状态永久不更新也不会无限循环。
+V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceRunner.handleMedia` 负责起播与刷到完成，进度以重载后目录 DOM 的服务器端状态为准。
+交棒的可靠性：目录交棒后不再自我重载，完全依赖新标签的 `returnToSource` 把目录重载。因此 `AiWorkspaceRunner.run()` 用 try/catch 兜住知识点处理，任何抛错都要继续走到 `autoSelect()`，否则目录会永久停等。FailGate 在目录侧 `openContentEntry` 里 bump，跨「子标签回目录重载」的多次尝试累计，满 `maxAttempts` 后跳过该项；新标签自身不持有跨重载的闸门（其 `_lastAdvanceIndex` 只在直接在本页启动逐项刷时生效）。
 
 面板日志持久化在 `sessionStorage` 的 `ykt_panel_logs`，目录重载后可以保留运行轨迹。保留数量要有上限。
 
@@ -188,6 +192,8 @@ V2 视频启动保留当前模式：`observePause` 在真实暂停信号到来�
 
 ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正的播放/暂停控件是 `xt-playbutton.xt_video_player_play_btn`（控制条）或 `xt-bigbutton.xt_video_player_big_play_layer`（中央）。`.play-btn-tip` 只是提示，`.xt_video_player_common_icon` 是音量图标——都不是播放控件，`findPlayButton` 不得返回它们（它跳过带 `tip` class 的节点，且不再列出 `.play-btn-tip`/`xt_video_player_common_icon`）。播放器在暂停状态会回退裸 `video.play()`，所以恢复播放需要点击一次真正的播放按钮。`handleMedia` 保持 `startPlayback` 为 `{ allowClick: false }`（快速点击切换按钮会导致播放/暂停闪烁），由带保护、低频的 `observePause` 通过正确按钮点击开始/恢复。
 
+起播静音与「解除静音看门狗」：网站播放器有解除静音看门狗（`timeupdate.volume` 起 1s 定时器，见 `muted` 即强制 `video.muted=false`）。仅设 `media.muted=true` 会在 1 秒内被还原，随后无用户激活的有声播放被浏览器暂停 → 视频卡住。`Player.prepareMedia` 的做法是先真实静音（媒体内部 `muted` 置真，自动播放策略查真实状态而非 JS getter），再用 `Object.defineProperty(media,'muted',{get:()=>true,set:()=>{}})` 冻结属性，令看门狗的赋值变 no-op（`OBSERVE.md` 已实测此序列可连续播放，`freezeMuted` 幂等、`__yktMutedFrozen` 只冻结一次）。副作用：脚本接管的媒体全程静音。`AiWorkspace.keepAlive` 也走 `Player.prepareMedia` 以获得同样冻结，勿再手动逐个赋值 `muted/volume`。
+
 ## Solver
 
 `Solver` 负责基于截图的多模态答题。
@@ -233,3 +239,10 @@ API 行为：
 - 不先检查分数/百分比就把 `进行中` 当作未完成，会误判混合状态字符串。
 - 不使用 FailGate 直接重试条目会造成无限重载循环。
 - 把跳过的条目标记为失败会产生噪声式误报；有意跳过用 `FailGate.skip()`。
+- V2 目录条目点击会**新开标签**（不是同标签导航）；在目录文档里找 `video`/作业元素必然「未找到 → 重载 → 再点 → 标签无限增长」。交棒用 `HANDOFF`，且 `run()` 收到 `HANDOFF` 时不得 `returnToList()`。
+- 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
+- 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
+- `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
+- 图文 / 讨论（`tuwen`/`taolun`）子项现走交棒，但新标签的 `AiWorkspaceRunner` 不处理评论类型 → 未发言条目开 `maxAttempts` 轮后被 `FailGate` 跳过、永不完成，面板「自动评论」开关对这类已失效。要恢复须在新标签侧接住讨论类型并发言，否则应移除该开关与 `autoCommentItem`。
+- `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
+- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；若课件其实是同页弹层却被误判为未找到，会出现该项反复跳，需回来放宽判据。

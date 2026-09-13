@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      1.2.2
+// @version      1.2.3
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       nagelanping
 // @license      GPL-3.0-only
@@ -82,6 +82,10 @@
       this.name = "NavigationStop";
     }
   }
+
+  // V2 目录条目点击后，站点在新标签/新页处理该内容（目录标签原地不动）。目录标签据此交棒：
+  // 停止本轮且不重载目录，新标签处理完再经 returnToSource 把目录重载后继续。作为 handler 的特殊返回值。
+  const HANDOFF = "__ykt_handoff__";
 
   const Utils = {
     // 短暂睡眠，等待网页加载；若处于暂停状态则在计时结束后继续挂起，直到恢复
@@ -290,7 +294,9 @@
       const raw = localStorage.getItem(Config.storageKeys.pendingAutoStart);
       const saved = Utils.safeJSONParse(raw, null);
       if (!saved || !saved.classroomId || !saved.ts) return null;
-      if (Date.now() - saved.ts > 30 * 60 * 1000) {
+      // 4 小时：须远大于单条目播放上界（getDDL=时长*3），否则长视频播到一半 pendingAutoStart 过期，
+      // 新标签 autoSelect 拿不到 returnUrl、目录永不被重载。目录每条目重载都会续约 ts，故 4h 只覆盖单条目。
+      if (Date.now() - saved.ts > 4 * 60 * 60 * 1000) {
         localStorage.removeItem(Config.storageKeys.pendingAutoStart);
         return null;
       }
@@ -1186,6 +1192,22 @@
       media.playbackRate = Config.playbackRate;
       media.setAttribute("muted", "");
       media.setAttribute("playsinline", "");
+      this.freezeMuted(media);
+    },
+    // 真实静音（媒体元素内部 muted 置真）后冻结 muted 属性：令网站「解除静音看门狗」的
+    // video.muted=false 变 no-op，避免无用户激活的有声播放被浏览器自动暂停（OBSERVE 已实测验证）。
+    freezeMuted(media) {
+      if (!media || media.__yktMutedFrozen) return;
+      try {
+        Object.defineProperty(media, "muted", {
+          configurable: true,
+          get: () => true,
+          set: () => {},
+        });
+        media.__yktMutedFrozen = true;
+      } catch (_) {
+        // 个别实现禁止重定义：忽略，仍保留上面的真实静音，尽力而为
+      }
     },
     waitForReady(media, timeout = 10000) {
       return new Promise((resolve) => {
@@ -1714,10 +1736,7 @@
           lastTime = currentTime;
           lastProgressAt = Date.now();
         }
-        media.muted = true;
-        media.defaultMuted = true;
-        media.volume = 0;
-        media.playbackRate = Config.playbackRate;
+        Player.prepareMedia(media);
         if (
           media.paused &&
           !media.ended &&
@@ -2881,6 +2900,14 @@
       });
       return document.querySelector(selector);
     }
+    // 点击一个内容条目：站点会新开标签/新页处理该知识点。目录标签只点击一次并计数（FailGate 兜底防死循环），
+    // 随后交棒：不在本目录文档找媒体，也不重载目录。新标签处理完经 returnToSource 把目录重载后 V2Runner 重扫继续。
+    async openContentEntry(entry, failKey = "") {
+      entry.click();
+      await Utils.sleep(800);
+      if (failKey) FailGate.bump(failKey);
+      return HANDOFF;
+    }
 
     // 三态分类：'completed' | 'in_progress' | 'not_started'
     // 对应雨课堂右侧状态列：已完成/已读、(N/M 或 x%) 进行中、未开始/未读
@@ -3074,7 +3101,7 @@
 
       let advanced = false;
       if (type.includes("shipin")) {
-        advanced = await this.handleVideo(course, failKey);
+        advanced = await this.openContentEntry(course, failKey);
       } else if (isBatch) {
         advanced = await this.handleBatch(listNode, failKey);
       } else if (type.includes("ketang")) {
@@ -3082,10 +3109,13 @@
       } else if (type.includes("kejian")) {
         advanced = await this.handleCourseware(course, failKey);
       } else if (isHomework) {
-        advanced = await this.handleHomework(course, failKey);
+        advanced = await this.openContentEntry(course, failKey);
       } else {
         advanced = false;
       }
+      // 已交棒给新标签/新页：本轮不重载目录（重载会再次点击又开新标签），由该页完成后重载目录继续。
+      if (advanced === HANDOFF) return;
+
       if (advanced && !FailGate.skipped(failKey)) {
         FailGate.reset(failKey);
       } else if (!FailGate.skipped(failKey)) {
@@ -3293,36 +3323,20 @@
           return true;
         }
 
-        let advanced = false;
-        if (tagText === "音频") {
-          advanced = await this.playAudioItem(item, title);
-        } else if (tagHref.includes("shipin")) {
-          advanced = await this.playVideoItem(item, title);
-        } else if (tagHref.includes("tuwen") || tagHref.includes("taolun")) {
-          advanced = await this.autoCommentItem(
-            item,
-            tagHref.includes("tuwen") ? "图文" : "讨论",
-          );
-        } else if (isHomework) {
-          advanced = await this.handleHomework(item, subKey);
-        } else {
-          this.panel.log(`类型未知，已跳过：${title}`, "warning");
-          FailGate.skip(subKey); // 主动跳过，静默，不重载，继续看同批后续子项
-          continue;
+        // 内容子项：点击后站点新开标签处理该知识点。目录只点击一次并计子项次数（FailGate 兜底防死循环），
+        // 交棒后不在本目录文档找媒体，也不重载目录；新标签处理完经 returnToSource 重载目录后继续扫下一子项。
+        if (
+          tagText === "音频" ||
+          tagHref.includes("shipin") ||
+          tagHref.includes("tuwen") ||
+          tagHref.includes("taolun") ||
+          isHomework
+        ) {
+          return await this.openContentEntry(item, subKey);
         }
-        if (advanced) {
-          if (!FailGate.skipped(subKey)) FailGate.reset(subKey);
-          if (parentFailKey) FailGate.reset(parentFailKey);
-        } else if (!FailGate.skipped(subKey)) {
-          const count = FailGate.bump(subKey);
-          if (count >= FailGate.maxAttempts) {
-            this.panel.log(
-              `${title} 连续 ${FailGate.maxAttempts} 轮未推进，后续将跳过`,
-              "warning",
-            );
-          }
-        }
-        return true; // 子项失败只计子项，不计批量父项；目录重扫后再决定下一步
+        this.panel.log(`类型未知，已跳过：${title}`, "warning");
+        FailGate.skip(subKey); // 主动跳过，静默，不重载，继续看同批后续子项
+        continue;
       }
 
       // 没有可处理子项：子项或已全部完成、或全部已跳过/超限。
@@ -3735,6 +3749,7 @@
       const checkBtn =
         document.querySelector(".ppt_img_box .check") ||
         document.querySelector("p.check");
+      const hasCheckBtn = Boolean(checkBtn);
       if (
         checkBtn &&
         /查看课件|查看PPT|查看幻灯片/i.test(checkBtn.innerText?.trim() || "")
@@ -3756,27 +3771,34 @@
         Boolean(document.querySelector(".ppt-container")) ||
         Boolean(document.querySelector('[class*="ppt-slide"]'));
 
+      const videoBox = document.querySelector(".video-box");
       if (isPPT) {
         await this.playPPTSlides(className);
-      } else {
-        const videoBox = document.querySelector(".video-box");
-        if (videoBox) {
-          videoBox.click();
-          await Utils.sleep(1800);
-          const cwVideo = document.querySelector("video");
-          await Player.playFromStart(cwVideo);
-          await Player.startPlayback(cwVideo);
-          Player.applySpeed();
-          const muteBtn = document.querySelector(
-            ".xt_video_player_common_icon",
-          );
-          muteBtn && muteBtn.click();
-          await Utils.poll(() => Utils.isPlayerTimeDisplayComplete(), {
-            interval: 800,
-            timeout: await Utils.getDDL(),
-          });
-          this.panel.log(`${className} 视频播放完毕`);
-        }
+      } else if (videoBox) {
+        videoBox.click();
+        await Utils.sleep(1800);
+        const cwVideo = document.querySelector("video");
+        await Player.playFromStart(cwVideo);
+        await Player.startPlayback(cwVideo);
+        Player.applySpeed();
+        const muteBtn = document.querySelector(
+          ".xt_video_player_common_icon",
+        );
+        muteBtn && muteBtn.click();
+        await Utils.poll(() => Utils.isPlayerTimeDisplayComplete(), {
+          interval: 800,
+          timeout: await Utils.getDDL(),
+        });
+        this.panel.log(`${className} 视频播放完毕`);
+      }
+      // 同页什么都没找到：课件多半已在新标签/新页打开，目录文档里没有可处理内容。
+      // 如实返回 false 让 FailGate 计数封顶，避免「记成成功→清零→重载→再点→无限开标签」。
+      if (!hasCheckBtn && !isPPT && !videoBox) {
+        this.panel.log(
+          `${className} 未在本页找到课件内容，按未推进交回目录复查`,
+          "warning",
+        );
+        return false;
       }
       return true;
     }
@@ -4581,22 +4603,28 @@
         return;
       }
       let ok = false;
-      if (AiWorkspace.isMediaRouteType(route.type)) {
-        ok = await this.handleMedia(route);
-      } else if (AiWorkspace.isExerciseRouteType(route.type)) {
-        ok = await this.handleExercise(route);
-      } else if (route.type === "content") {
-        ok = await this.handleMedia(route);
-        if (!ok && Store.getFeatureConf().autoAI) {
+      try {
+        if (AiWorkspace.isMediaRouteType(route.type)) {
+          ok = await this.handleMedia(route);
+        } else if (AiWorkspace.isExerciseRouteType(route.type)) {
           ok = await this.handleExercise(route);
+        } else if (route.type === "content") {
+          ok = await this.handleMedia(route);
+          if (!ok && Store.getFeatureConf().autoAI) {
+            ok = await this.handleExercise(route);
+          }
+        } else {
+          this.panel.log(
+            `当前类型为 ${route.type}，暂不自动处理此类型，自动跳过`,
+            "warning",
+          );
+          await Utils.sleep(1500);
+          ok = true;
         }
-      } else {
-        this.panel.log(
-          `当前类型为 ${route.type}，暂不自动处理此类型，自动跳过`,
-          "warning",
-        );
-        await Utils.sleep(1500);
-        ok = true;
+      } catch (err) {
+        // 处理抛错也必须继续走 autoSelect：目录经新标签交棒时靠本页 returnToSource 重载目录，
+        // 若在此中断会让目录标签永久停等。记日志后按未完成继续。
+        this.panel.log(`当前知识点处理异常：${err?.message || err}`, "warning");
       }
       if (!ok) {
         this.panel.log("当前项未能确认完成，仍继续下一项", "warning");
