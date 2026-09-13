@@ -68,13 +68,13 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - FailGate 用法：
   `FailGate\\.|ykt_fail_counts|clearPendingAutoStart`
 - AI 答题管线：
-  `captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt`
+  `captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt|exerciseFingerprint|advanceExerciseQuestion`
 - 题目文档与 iframe 跨越：
   `getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
-  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`（`tmp/` 被 gitignore，只是本地脚本）
+  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -279,9 +279,14 @@ API 行为：
 
 - `"refused"`：AI 拒答（见上）；
 - `"incomplete"`：缺选项容器 / 无有效选项 / 填空无答案 / 找不到提交按钮——本轮记未推进；
-- `"filled"`：已选中或填好并点击了提交按钮。**它还不是成功**：`solveExerciseQuestion` 接着用 `Utils.poll(() => isExerciseQuestionSubmitted(root, tab, index, true), { interval: 500, timeout: 8000 })` 复核实机观测到会回写的判据（`isProblemSubmitted` / `isExerciseTabAnswered`），确认到才返回 `true`，8 秒内没有回写则打 warning 并返回 `false`。
+- `"filled"`：已选中或填好并点击了提交按钮。**它还不是成功**：`solveExerciseQuestion` 接着 `Utils.poll` 复核判据，**两条命中任一条即算确认**：
+  - ① 实机观测到会回写的判据（`isProblemSubmitted` / `isExerciseTabAnswered` / 当前题面 `isExerciseAnswered`），interval 500 / timeout 8000；
+  - ② 题面指纹变了（`AiWorkspace.exerciseFingerprint`）——**站点提交成功会自己翻到下一题**（2026-09-13 实机观测，见 `OBSERVE.md`），此时 ① 里的「当前题面」判据读到的是下一题、永远看不到回写，光靠 ① 会把已成功的提交判成未推进（进而 `allSubmitted=false`、`progressed=false`、目录侧失败计数不清零，整份作业被 `maxAttempts` 跳过）。靠 ② 确认时另打一条 info 日志写明是靠翻页推断的。
+  两条都不中则打 warning 并返回 `false`。
 
-`solveExerciseQuestion(root, label, tab, index)` 的后两个参数就是给这次复核用的，由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，只能退回纯 DOM 的 `isExerciseAnswered()`（`OBSERVE.md` 未单独抽样该判据）。`handleExercise` 会汇总每题结果：有一题没确认成功就返回 `false`（只是日志与返回值更诚实，流程不变——仍 `returnToSource` 重载目录，由目录重扫 + FailGate 兜底）。
+`solveExerciseQuestion(root, label, tab, index)` 的后两个参数就是给这次复核用的，由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，只能退回纯 DOM 的 `isExerciseAnswered()`。`handleExercise` 会汇总每题结果：有一题没确认成功就返回 `false`（只是日志与返回值更诚实，流程不变——仍 `returnToSource` 重载目录，由目录重扫 + FailGate 兜底）。
+
+**正因为站点提交后会自己翻页**，无题号列表路径的 `advanceExerciseQuestion(root, previousFingerprint)` 必须先看题面指纹有没有变：变了就直接算已推进、**不再点「下一题」**（否则一次提交推进两题，新翻到的那题整题漏答——2026-09-13 实机 bug）。
 
 `solveExerciseQuestion` 的 refuse 分支还会调用 `FailGate.markRefused(...)`，把来源目录里本次交棒条目的 key 标成 `-2`：这一题既然脚本答不了，那份作业就不可能靠脚本刷完，目录重扫时应当直接跳过，而不是再交棒重试到 FailGate 满 3 次。key 由目录在交棒前写入 `sessionStorage`（`ykt_handoff_key`），子标签继承的是拷贝，因此回写目标是 `window.opener.sessionStorage`；拿不到 opener（用户直接在本页启动、窗口已关）时静默退回原来的重试行为。
 

@@ -164,3 +164,14 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 未修（结论）：xcloud 页面的 classroom id 解析需实机 URL 样本，已记入 OBSERVE 待验证；`markProgress` 不清「已提示」标记属可接受语义；交棒窗口手动重开为已知取舍。
 
 验证：`node --check`、四个自测、`git diff --check` 全通过。`@version` 2.0.3 → 2.0.4。
+
+## 2026-09-13 修复作业逐题「跳题」（机主实机报告，@version 2.0.5）
+
+实机日志（作业「第三章 品格优势与美德--作业」，无题号列表路径）显示：`正在提交...` 后站点**自己翻到下一题**（机主确认），随后脚本空等 8 秒打 `第 1 题 提交后未确认到已提交回写，本轮记未推进`，再无条件点「下一题」→ 又推进一题 → 第 2 题整题漏答，直接开始问第 3 题。
+
+两处修正：
+
+1. `solveExerciseQuestion` 的提交复核改为「回写判据 **或** 题面指纹变了」二选一（`AiWorkspace.exerciseFingerprint`）。站点提交后自动翻页时，「当前题面」类判据读到的是下一题、永远看不到回写，光靠它会把成功提交判成未推进；而误判会让 `allSubmitted=false` → `progressed=false` → 目录侧失败计数不清零，整份作业 3 轮后被 `maxAttempts` 跳过。靠翻页确认时另打一条 info 日志。
+2. `advanceExerciseQuestion(root, previousFingerprint)` 点「下一题」前先比较题面指纹：已经变了就直接算已推进、不点按钮（否则一次提交推进两题）。
+
+新增 `tmp/advance-selftest.cjs`（四项：题面已变不点按钮 / 未变点一次 / 无按钮返回 false / 无基准指纹按按钮推进）。`AGENTS.md` 的提交复核与推进语义、`OBSERVE.md` 的实机观测已同步。验证：`node --check`、五个自测、`git diff --check` 全通过。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.4
+// @version      2.0.5
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2372,6 +2372,12 @@
       }
       return root;
     },
+    // 题面指纹：判断「当前显示的还是不是同一道题」。站点提交成功会自己翻到下一题（实测），
+    // 所以「题面变了」既能当提交被接受的证据，也是不要再点「下一题」的理由。
+    exerciseFingerprint(root = this.getExerciseContainer()) {
+      const questionRoot = this.getExerciseQuestionBody(root);
+      return this.normalizeText(questionRoot?.innerText || "").slice(0, 120);
+    },
     isExerciseAnswered(root = this.getExerciseContainer()) {
       if (!root) return false;
       const statusSelectors = [
@@ -4581,6 +4587,8 @@
         this.panel.log(`${label || "当前题目"} 已完成，跳过`, "warning");
         return true;
       }
+      // 提交前的题面指纹：提交后站点会自己翻页，指纹变化是「提交被接受」的证据（见下）
+      const beforeFingerprint = AiWorkspace.exerciseFingerprint(root);
 
       const questionType = Solver.detectQuestionType(questionRoot);
       let optionCount = 0;
@@ -4626,7 +4634,14 @@
             );
             return false;
           }
-          // 已点提交，但「点了按钮」不等于「提交成功」：用实机确认的回写判据复核，确认不到就按未推进返回。
+          // 已点提交，但「点了按钮」不等于「提交成功」。复核判据二选一：
+          // ① 实机确认过的回写判据（Vue 提交时间 / 题号页签 / 题面状态）；
+          // ② 题面换成了另一道题——站点提交成功会自己翻页（实机观测），此时当前题面已经不是刚才那题，
+          //    ① 可能一直看不到（当前题面已是下一题），但翻页本身就是提交被接受的证据。
+          const fingerprintChanged = () => {
+            const now = AiWorkspace.exerciseFingerprint(root);
+            return Boolean(now && beforeFingerprint && now !== beforeFingerprint);
+          };
           const confirmed = await Utils.poll(
             () =>
               this.isExerciseQuestionSubmitted(
@@ -4634,7 +4649,7 @@
                 tab,
                 index,
                 true,
-              ),
+              ) || fingerprintChanged(),
             { interval: 500, timeout: 8000 },
           );
           if (!confirmed) {
@@ -4643,6 +4658,18 @@
               "warning",
             );
             return false;
+          }
+          if (
+            fingerprintChanged() &&
+            !this.isExerciseQuestionSubmitted(
+              AiWorkspace.getExerciseContainer() || root,
+              tab,
+              index,
+              true,
+            )
+          ) {
+            // 站点自己翻了页、回写判据看不到：说清楚是靠翻页推断的，便于以后排查
+            this.panel.log(`${label || "当前题目"} 已提交（站点已自动翻到下一题）`);
           }
           await Utils.sleep(1200);
           return true;
@@ -4673,6 +4700,15 @@
 
     async advanceExerciseQuestion(root, previousFingerprint = "") {
       const currentRoot = AiWorkspace.getExerciseContainer() || root;
+      // 站点提交成功会自己翻到下一题（实测）。此时题面已经变了，再点「下一题」会多跳一题、
+      // 把新翻到的那题整题漏答——所以先看题面有没有变，变了就直接算已推进，不点按钮。
+      const fingerprintNow = AiWorkspace.exerciseFingerprint(currentRoot);
+      if (
+        previousFingerprint &&
+        fingerprintNow &&
+        fingerprintNow !== previousFingerprint
+      )
+        return true;
       const nextBtn = AiWorkspace.getExerciseActionButton(
         currentRoot,
         /下一题|下一道|下一步/,
@@ -4681,11 +4717,9 @@
       nextBtn.click();
       return Utils.poll(
         () => {
-          const latestRoot = AiWorkspace.getExerciseContainer() || currentRoot;
-          const questionRoot = AiWorkspace.getExerciseQuestionBody(latestRoot);
-          const fingerprint = AiWorkspace.normalizeText(
-            questionRoot?.innerText || "",
-          ).slice(0, 120);
+          const fingerprint = AiWorkspace.exerciseFingerprint(
+            AiWorkspace.getExerciseContainer() || currentRoot,
+          );
           return fingerprint && fingerprint !== previousFingerprint;
         },
         { interval: 500, timeout: 5000 },
