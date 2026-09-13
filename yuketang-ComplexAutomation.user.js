@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.7
+// @version      2.0.8
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2264,6 +2264,10 @@
     },
     getExerciseQuestionTabs(root = this.getExerciseContainer()) {
       if (!root) return [];
+      // 题号列表不在题面容器里（2026-09-13 实测 DOM）：它在题面容器的**兄弟**节点 `.problems-aside` 下，
+      // 两者同属 `.problem-box`（`.container-body > .problem-box > {.problems-aside, .container-problem}`）。
+      // 只从 `.container-problem` 里找会一个都找不到，从而被误判成「无题号列表」。
+      const scope = root.closest?.(".problem-box") || root.parentElement || root;
       const selectors = [
         ".subject-item.J_order",
         ".subject-item",
@@ -2273,7 +2277,7 @@
         '[class*="problem-index"]',
         '[class*="question-index"]',
       ].join(",");
-      const visible = [...root.querySelectorAll(selectors)].filter(
+      const visible = [...scope.querySelectorAll(selectors)].filter(
         (el, index, arr) => {
           if (!this.isVisibleElement(el)) return false;
           if (arr.indexOf(el) !== index) return false;
@@ -2391,19 +2395,20 @@
     // 而它的文本带「作业」，用文本排除掉，别把它当成某道题的作答提交。
     hasExerciseSubmitControl(itemBodyElement) {
       if (!itemBodyElement) return false;
-      const roots = [itemBodyElement, itemBodyElement.parentElement].filter(Boolean);
-      for (const root of roots) {
-        for (const btn of root.querySelectorAll(
-          'button, .el-button, [role="button"]',
-        )) {
-          const text = btn.innerText || "";
-          if (
-            btn.offsetParent !== null &&
-            /提交|保存|确认|确定/.test(text) &&
-            !/作业|交卷/.test(text)
-          )
-            return true;
-        }
+      // 提交控件在 `.container-problem > .problem-fixedbar` 里（2026-09-13 实测），而题面正文在它的
+      // 兄弟 `.el-scrollbar` 下，所以从题面自身往上找到题面容器再找。
+      const scope =
+        itemBodyElement.closest?.(".container-problem") ||
+        itemBodyElement.parentElement ||
+        itemBodyElement;
+      for (const btn of scope.querySelectorAll('button, .el-button, [role="button"]')) {
+        const text = btn.innerText || "";
+        if (
+          btn.offsetParent !== null &&
+          /提交|保存|确认|确定/.test(text) &&
+          !/作业|交卷/.test(text)
+        )
+          return true;
       }
       return false;
     },
@@ -4390,7 +4395,9 @@
       const active = tabs.find((tab) =>
         /active|current|selected|is-active/.test(tab.className),
       );
-      return AiWorkspace.normalizeText(active?.innerText || "");
+      const text = AiWorkspace.normalizeText(active?.innerText || "");
+      // 页签文案就是题号（实测 `1`、`2`…）：补成「第 N 题」，日志里跟无页签路径一个读法
+      return /^\d{1,2}$/.test(text) ? `第 ${text} 题` : text;
     }
 
     getReturnUrl() {
@@ -4809,7 +4816,21 @@
             continue;
           }
           currentTab.click();
-          await Utils.sleep(1200);
+          // 等这一题真的切过来再读状态：站点是 SPA，切换后活动页签才改。不等就可能读到上一题的状态——
+          // 上一题刚提交过、控件还写着「已提交」，会被误判成「这题已提交，跳过」而漏答。
+          await Utils.poll(
+            () => {
+              const tabsNow = AiWorkspace.getExerciseQuestionTabs(
+                AiWorkspace.getExerciseContainer() || currentRoot,
+              );
+              const tabNow = tabsNow[i];
+              return Boolean(
+                tabNow && /active|current|selected|is-active/.test(tabNow.className),
+              );
+            },
+            { interval: 300, timeout: 5000 },
+          );
+          await Utils.sleep(800);
           const latestRoot = AiWorkspace.getExerciseContainer() || currentRoot;
           if (
             this.isExerciseQuestionSubmitted(latestRoot, currentTab, i, true)

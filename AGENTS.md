@@ -288,6 +288,8 @@ API 行为：
 
 **正因为站点提交后会自己翻页**，无题号列表路径的 `advanceExerciseQuestion(root, previousFingerprint)` 必须先看题面指纹有没有变：变了就直接算已推进、**不再点「下一题」**（否则一次提交推进两题，新翻到的那题整题漏答——2026-09-13 实机 bug）。
 
+作业页的真实结构（2026-09-13 实机，见 `OBSERVE.md`）：`.container-body > .problem-box` 下有**兄弟**两棵：`.problems-aside`（题号列表 `.subject-item.J_order[data-order]`）与 `.container-problem`（题面正文在 `.el-scrollbar` 里、提交栏在 `.problem-fixedbar` 里）。`getExerciseContainer()` 取的是后者，所以**题号列表与提交控件都不在它的元素层级内**：`getExerciseQuestionTabs()` 必须从 `.container-problem` 往上用 `.closest(".problem-box")` 取范围，找提交/已提交状态要用 `.closest(".container-problem")`。一律不要用「从题面往下找」的写法（这正是「题号列表找不到、已提交读不到」的根因）。
+
 题面的作答状态由**提交控件的文案**表达（2026-09-13 实机）：未作答 → 不可点击的「提交」；已作答未提交 → 「提交」变可点击；已提交 → 不可点击的「已提交」。因此「已提交」是可直接用的判据，**不要**拿「提交」是否 disabled 反推（未作答时它同样 disabled）。该控件不在题面里，`isExerciseAnswered()` 按 容器（`.container-problem`）→ 文档 → 题面 逐层找这个专属文案。另：只有第一题没有「上一题」、只有最后一题没有「下一题」。
 
 提交后站点的行为分两种（2026-09-13 实机）：**答对自动翻到下一题；答错留在原页、只把结果渲染上去**（提交按钮随即不可用）。判据是 `AiWorkspace.exerciseQuestionStillShown(previousText)`——拿提交前题面的前 40 字在当前题面里做包含判断：还包含就是没翻页（该自己点「下一题」），已经换掉就是站点翻过了（再点会漏答一题）。**不要用「题面文本变了」当已翻页的判据**：答错时同一页渲染结果也会让文本变化。同理，`advanceExerciseQuestion` 点完「下一题」要等的是「刚才那道题从页面上消失」，不是「文本变了」。

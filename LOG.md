@@ -195,3 +195,19 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - 无题号列表路径推进不了时补一条日志「没有可推进的下一题，本轮作业处理结束」（末题本来就没有「下一题」，属正常收尾）。
 
 新增 `tmp/exercise-answered-selftest.cjs`（七项，含「不可点击的提交」不算已提交）。`AGENTS.md`、`OBSERVE.md` 同步。验证：`node --check`、七个自测、`git diff --check` 全通过。
+
+## 2026-09-13 题号列表抓取范围修正（实机看 DOM，@version 2.0.8）
+
+机主截图显示作业页左侧确有 1–5 的题号方块，脚本却报「未找到题号列表」。用 `ykt-ff`（专用 profile，端口 2828）打开作业页（leaf 84703977）抽样 DOM，拿到真实结构：
+
+```
+.container-body > .problem-box
+  ├── .problems-aside → .aside-body → .list-inline > .subject-item.J_order[data-order] × 5（题号文本 + 空 .status-container）
+  └── .container-problem → .el-scrollbar（题面正文）/ .problem-fixedbar（上一题 / 提交 / 下一题）/ .annotation-container
+```
+
+- 根因：题号列表是 `getExerciseContainer()`（= `.container-problem`）的**兄弟**节点，`getExerciseQuestionTabs(root)` 只在容器内部找 → 实测老范围命中 1 个且被叶子过滤丢掉（0 个页签），新范围（`.closest(".problem-box")`）命中 5 个页签。
+- 同类问题：提交控件在 `.problem-fixedbar`（题面正文的兄弟分支），`hasExerciseSubmitControl()` 的取值范围同样改成 `.closest(".container-problem")`（原先只看题面自身与父级，真实页面上会落空）。
+- 走页签路径后新增一处等待：点页签后先 `Utils.poll` 到该页签变成 active 再读状态，避免读到上一题残留的「已提交」而漏答一题；`getExerciseQuestionLabel()` 把纯数字页签文案补成「第 N 题」。
+
+`AGENTS.md`（作业页结构与「不要从题面往下找」的约束）、`OBSERVE.md`（真实 DOM 与坑）同步。验证：`node --check`、七个自测、`git diff --check` 全通过；实机 `evalf` 确认新范围能取到 5 个页签。
