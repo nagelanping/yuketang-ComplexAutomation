@@ -127,3 +127,17 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 未修（结论见 WORKFLOW P）：`handleClassroom` 无超时属工作包 I（机主定保留）；`dispatchUserLikeClick` 双击与 `findPlayButton` 首选提示元素需实机确认；`getSlideReadStatus` / `originalTextSnapshots` / Pro 游标差 1 属疑似或工作包 J。
 
 新增 `tmp/failgate-selftest.cjs`（桩模拟目录那份与子标签拷贝两个 sessionStorage）：计数、跳过哨兵、拒答哨兵、进展清零、无 opener 静默五项通过。`@version` 2.0.0 → 2.0.1。
+
+## 2026-09-13 工作包 P 复查：子代理复看 23c86ce 后的回修
+
+复查结论：6 条修正里 4 条可信，2 条引入新缺陷，1 条只堵了一半根因。已回修：
+
+1. `markProgress` 判据过宽（新引入的无限交棒）：`handleExercise` 在「autoAI 关闭 / 题号列表为空 / 题面读不到」这些什么都没做的路径上也返回 true。改为 `didWork && allSubmitted`，只有真遇到「已提交」或成功作答的题才算进展。
+2. `running` 闸门无兜底解锁（新引入的锁死）：`HANDOFF` 后 Runner 已 return、目录空闲等待，用户想手动重开却被挡住。`runRoute()` 加 `.finally(() => panel.releaseStart())`，只放闸门不动按钮文案。
+3. `getReturnUrl()` 读侧后门：原先 V2 内容页分支不校验 classroomId。现在只要路由给得出课堂 id 就必须与 pending 一致；`boot()` 的自动恢复判据未动，属同类残留。
+4. `_writeToOpener` 的 try 只包了取值：opener 正在导航时 getItem/setItem 抛错会逃出 `AiWorkspaceRunner.run()`。整个读写纳入同一个 try。
+5. 拒答标记不再降级成 -1（降级会把「需人工处理」说成「全部完成」）：改用 `refusedWarned` Set 只提示一次，并新增 `refusedSeen` 计入终结日志。
+
+另有两处配平：`AiWorkspaceRunner.run()` 早退路径的 `progressed` 语义、`handleBatch` 里我第一版漏掉的 `continue` 已确认。
+
+验证：`node --check`、四个自测、`git diff --check` 全通过。`@version` 2.0.1 → 2.0.2。

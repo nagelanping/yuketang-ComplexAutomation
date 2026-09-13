@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.1
+// @version      2.0.2
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -374,29 +374,29 @@
     // 所以跨标签回写必须写 window.opener 的那份（同源）。value 传 null 表示删掉该 key。
     _writeToOpener(key, value) {
       if (!key) return false;
-      let target = null;
       try {
-        target = window.opener ? window.opener.sessionStorage : null;
+        const target = window.opener ? window.opener.sessionStorage : null;
+        if (!target) return false;
+        const map =
+          Utils.safeJSONParse(
+            target.getItem(Config.storageKeys.failCounts),
+            {},
+          ) || {};
+        if (value === null) delete map[key];
+        else map[key] = value;
+        target.setItem(Config.storageKeys.failCounts, JSON.stringify(map));
+        return true;
       } catch (err) {
-        target = null; // 跨源或窗口已关，退回本轮重试
+        // 跨源、窗口已关或正在导航：静默退回本页行为，绝不让它把调用方（run/autoSelect 链）打断
+        return false;
       }
-      if (!target) return false;
-      const map =
-        Utils.safeJSONParse(
-          target.getItem(Config.storageKeys.failCounts),
-          {},
-        ) || {};
-      if (value === null) delete map[key];
-      else map[key] = value;
-      target.setItem(Config.storageKeys.failCounts, JSON.stringify(map));
-      return true;
     },
     // AI 拒答：题目无法由脚本完成，只能人工介入。标记来源目录跳过该条目。
     markRefused(key) {
       return this._writeToOpener(key, -2);
     },
     // 子标签确认本知识点确实做成了：清掉来源目录上的失败计数。
-    // 目录侧只负责交棒，看不到内容页结果，若只在交棒时 bump，服务端回写慢的条目
+    // 目录侧只负责交棒、看不到内容页结果，若只在交棒时 bump，服务端回写慢的条目
     //（OBSERVE.md 记录过作业第 3 轮才翻成已完成）会在做完之前就数满 maxAttempts 被跳过。
     markProgress(key) {
       return this._writeToOpener(key, null);
@@ -424,6 +424,9 @@
       sessionStorage.removeItem(Config.storageKeys.failCounts);
     },
   };
+
+  // 拒答标记（-2）会一直留在 FailGate 里，目录每轮重扫都会再遇到它；用这个集合保证只提示一次。
+  const refusedWarned = new Set();
 
   // ---- UI 面板 ----
   function createPanel() {
@@ -1120,6 +1123,10 @@
         // 流程结束（完成/出错/非目标页）时收起暂停按钮并复位闸门
         if (PauseGate.paused) PauseGate.resume();
         ui.btnPause.style.display = "none";
+      },
+      // 只放开启动闸门，不动按钮文案：HANDOFF 后目录在等新标签回跳，界面仍应显示「运行中」
+      releaseStart() {
+        running = false;
       },
     };
   }
@@ -3485,6 +3492,7 @@
       let target = null;
       let skippedByLimit = 0;
       let skippedInPlace = 0;
+      let refusedSeen = 0; // 本轮遇到几条「AI 拒答」，终结判定要用它，别报成「全部完成」
       for (let i = 0; i < list.length; i++) {
         const course = list[i]
           ?.querySelector(".content-box")
@@ -3506,11 +3514,14 @@
         if (statusState === "completed") continue; // 顶层已完成（含整批完成）一律跳过
         const failKey = FailGate.key(this.classroomId, i, title);
         if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
-        // AI 拒答（子标签经 opener 回写哨兵 -2）：脚本答不完这份作业，提示一次后按主动跳过处理，
-        // 免得每轮重扫都重进这份作业、也免得刷同一条警告。
+        // AI 拒答（子标签经 opener 回写哨兵 -2）：脚本答不完这份作业，重扫时跳过，只提示一次。
+        // 标记保留不降级成 skip(-1)：终结判定还要数它，否则会把「请人工处理」说成「课程已全部完成」。
         if (FailGate.refused(failKey)) {
-          this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
-          FailGate.skip(failKey);
+          if (!refusedWarned.has(failKey)) {
+            refusedWarned.add(failKey);
+            this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
+          }
+          refusedSeen++;
           skippedInPlace++;
           continue;
         }
@@ -3587,9 +3598,9 @@
           location.reload();
           throw new NavigationStop();
         }
-        if (skippedByLimit > 0) {
+        if (skippedByLimit > 0 || refusedSeen > 0) {
           this.panel.log(
-            `遍历结束：仍有 ${skippedByLimit} 项达到重试上限未完成，请手动检查`,
+            `遍历结束：${skippedByLimit} 项达到重试上限、${refusedSeen} 项 AI 拒绝作答未完成，请手动检查`,
             "warning",
           );
           this.panel.resetStartButton("开始");
@@ -3735,11 +3746,10 @@
         const subKey = FailGate.key(this.classroomId, batchTitle, i, title);
         if (FailGate.skipped(subKey)) continue; // 主动跳过子项，静默
         if (FailGate.refused(subKey)) {
-          this.panel.log(
-            `${title}：AI 拒绝作答，已跳过（请人工处理）`,
-            "warning",
-          );
-          FailGate.skip(subKey); // 提示一次后按主动跳过处理，后续重扫静默
+          if (!refusedWarned.has(subKey)) {
+            refusedWarned.add(subKey);
+            this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
+          }
           continue;
         }
         if (FailGate.exhausted(subKey)) {
@@ -4297,8 +4307,13 @@
       const pending = Store.getPendingAutoStart();
       const route = AiWorkspace.getRoute();
       if (!pending || !route) return "";
-      if (Utils.isV2ContentPage()) return pending.returnUrl || "";
-      if (route.classroomId && pending.classroomId !== route.classroomId)
+      // 只要路由给得出课堂 id 就必须与 pending 对得上——V2 内容页这条分支以前跳过校验，
+      // 于是别的课堂遗留的 pending 会把本标签导航去那个课堂的目录。
+      if (
+        route.classroomId &&
+        pending.classroomId &&
+        pending.classroomId !== route.classroomId
+      )
         return "";
       return pending.returnUrl || "";
     }
@@ -4637,7 +4652,7 @@
       const featureFlags = Store.getFeatureConf();
       if (!featureFlags.autoAI) {
         this.panel.log("已关闭 AI 自动答题，作业将直接跳过", "warning");
-        return true;
+        return false; // 什么都没做，不能算进展（目录侧会清失败计数）
       }
 
       const ready = await Utils.poll(
@@ -4656,7 +4671,10 @@
       const tabs = AiWorkspace.getExerciseQuestionTabs(root);
       if (tabs.length) {
         this.panel.log(`检测到题目索引 ${tabs.length} 个，按题号顺序作答`);
+        // didWork：本页是否真遇到了「已提交」或成功作答的题。什么都没遇到（题号列表为空、题面读不到）时
+        // 不能算进展，否则目录侧会清掉失败计数、为这个知识点无限交棒。
         let allSubmitted = true;
+        let didWork = false;
         for (let i = 0; i < tabs.length; i++) {
           const currentRoot = AiWorkspace.getExerciseContainer() || root;
           const currentTabs = AiWorkspace.getExerciseQuestionTabs(currentRoot);
@@ -4666,6 +4684,7 @@
             this.isExerciseQuestionSubmitted(currentRoot, currentTab, i, false)
           ) {
             this.panel.log(`第 ${i + 1} 题已提交，跳过`, "warning");
+            didWork = true;
             continue;
           }
           currentTab.click();
@@ -4675,6 +4694,7 @@
             this.isExerciseQuestionSubmitted(latestRoot, currentTab, i, true)
           ) {
             this.panel.log(`第 ${i + 1} 题已提交，跳过`, "warning");
+            didWork = true;
             continue;
           }
           const solved = await this.solveExerciseQuestion(
@@ -4683,10 +4703,11 @@
             currentTab,
             i,
           );
-          if (!solved) allSubmitted = false;
+          if (solved) didWork = true;
+          else allSubmitted = false;
         }
-        // 只要有一题未确认提交成功，就不能把这个知识点报成已完成（下面靠目录重扫与 FailGate 兜底）
-        return allSubmitted;
+        // 有题没确认提交成功就不算完成（下面靠目录重扫与 FailGate 兜底）；一题都没遇到也不算进展
+        return allSubmitted && didWork;
       }
 
       this.panel.log(
@@ -4695,6 +4716,7 @@
       );
       let previousFingerprint = "";
       let allSubmitted = true;
+      let didWork = false; // 同题号列表路径：一题都没处理过就不算进展
       for (let i = 0; i < 20; i++) {
         const currentRoot = AiWorkspace.getExerciseContainer() || root;
         const questionRoot = AiWorkspace.getExerciseQuestionBody(currentRoot);
@@ -4708,12 +4730,14 @@
             `${this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`} 已提交，跳过`,
             "warning",
           );
+          didWork = true;
         } else {
           const solved = await this.solveExerciseQuestion(
             currentRoot,
             this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`,
           );
-          if (!solved) allSubmitted = false;
+          if (solved) didWork = true;
+          else allSubmitted = false;
         }
         previousFingerprint = fingerprint;
         const moved = await this.advanceExerciseQuestion(
@@ -4722,7 +4746,7 @@
         );
         if (!moved) break;
       }
-      return allSubmitted;
+      return allSubmitted && didWork;
     }
 
     async run(preventScreenCheckSwitch = true) {
@@ -4789,7 +4813,10 @@
         console.error(err);
         panel.log(`运行异常：${err?.message || err}`, "error");
         panel.resetStartButton("开始");
-      });
+      })
+      // 这一轮 Runner 结束（含 HANDOFF 与各种早退）就放开启动闸门：目录在等新标签回跳时本就空闲，
+      // 卡住时用户仍能手动再点「开始」恢复，不会被「已在运行中」永久锁在面板上。
+      .finally(() => panel.releaseStart());
   }
 
   function start() {

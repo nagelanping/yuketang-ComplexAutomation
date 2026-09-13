@@ -525,6 +525,18 @@ git diff --check
 ```
 
 实机待验（机主）：拒答条目在**顶层**（不是批次内）也应只被提示一次并跳过；长作业在服务端状态回写期间不再被 `maxAttempts` 提前跳过。
+
+### 复查与回修（2026-09-13，子代理复看 `23c86ce`）
+
+复查结论：上面 6 条里 4 条可信（拒答链、`bump` 守卫、`ts` 续约、两处清理），有 2 条引入了新缺陷，另 1 条只堵了一半根因。已回修：
+
+1. **`markProgress` 判据过宽（新引入，会造成无限交棒）**：`progressed = ok`，而 `handleExercise` 在「`autoAI` 关闭」「题号列表为空」「题面读不到」这些**什么都没做**的路径上也返回 true，于是目录计数被清掉、`exhausted` 永不成立。现在 `handleExercise` 用 `didWork && allSubmitted` 收口（只有真遇到「已提交」或成功作答的题才算），`!autoAI` 直接返回 false。
+2. **`running` 闸门无兜底解锁（新引入，会把用户锁在面板上）**：早期只有 `resetStartButton()` 放开闸门，而 `HANDOFF` 之后 Runner 已经 `return`、目录只是空闲等待，用户想手动重开却被「已在运行中」挡住（`handleClassroom` 的 `waitForEnd` 挂起时尤其致命）。现在 `runRoute()` 加了 `.finally(() => panel.releaseStart())`：这一轮 Runner 结束就放开闸门，但不动按钮文案（仍是「运行中」）。
+3. **`getReturnUrl()` 的读侧后门**：写侧成对之后，读侧仍有一条「V2 内容页直接返回 `pending.returnUrl`、不校验 classroomId」的分支。现在只要路由给得出课堂 id 就必须与 `pending` 一致。`boot()` 里 `isV2ContinuationPage` 的自动恢复判据没动，属同一类问题的残留（需实机样本再定）。
+4. **`_writeToOpener` 只把取值包在 try 里**：`markProgress` 挂在 `autoSelect()` 之前，opener 正在导航时 `getItem/setItem` 抛错会逃出 `run()`、目录永久停等。现在整个读写都在同一个 try 内。
+5. **拒答标记不再降级成 `-1`**：降级会丢掉信息，导致终结日志把「有题目需人工处理」说成「课程已全部完成」。改为模块级 `refusedWarned` Set 保证只提示一次，并新增 `refusedSeen` 计入 `遍历结束：…请手动检查`。
+
+回修后 `node --check`、`tmp/failgate-selftest.cjs`、`tmp/parse-answer-selftest.cjs`、`tmp/poll-selftest.cjs`、`tmp/prompt-sync-check.cjs`、`git diff --check` 全部通过。
 ## 完成维护
 
 完成任务后维护该文档，在已完成的对应条目下进行简要说明。
