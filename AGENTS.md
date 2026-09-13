@@ -77,7 +77,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
-  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`、`node tmp/exercise-answered-selftest.cjs`、`node tmp/stop-selftest.cjs`、`node tmp/forum-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
+  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`、`node tmp/exercise-answered-selftest.cjs`、`node tmp/stop-selftest.cjs`、`node tmp/forum-selftest.cjs`、`node tmp/completion-state-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -173,11 +173,13 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 
 - 先看分数：`N/N` 表示已完成；`N/M`（`N < M`）表示进行中；`0/M` 表示未开始。
 - 再看百分比：`100%` 表示已完成；其他百分比表示进行中。
-- 最后看文字：`已完成` / `已读` 表示已完成；`进行中` 表示进行中；其他文字默认未开始。
+- 最后看文字：`已发言` / `已回复` / `已完成` / `已读` 表示已完成；`进行中` 表示进行中；其他文字（含 `未发言` / `未读` / `未开始`）默认未开始。
 
 这个优先级用于处理混合 UI 文本，如 `1% 进行中` 或 `3/6 进行中`。
 
-`Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它走到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
+`Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` / `已发言` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它走到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
+
+讨论区叶子在目录里的状态文本只有「已发言」/「未发言」两种（既没有分数也没有百分比），`已发言` 必须算 completed——漏掉它，脚本会对同一条讨论**反复交棒**：`handleForum` 见「已发言」返回 true → 目录侧 `markProgress` 清掉失败计数 → 重扫又选中同一条 → 再开一个标签，永远到不了 `maxAttempts`。实机 23 条讨论叶子的状态文本抽样见 `OBSERVE.md`。`node tmp/completion-state-selftest.cjs` 覆盖这两条与分数/百分比优先级。
 
 ## 批次数
 
@@ -364,3 +366,4 @@ API 行为：
 - 讨论区回复**不要改回截图问 AI**：该页无字体混淆、教师正文是纯文本（`.main-text-attachment`），截图只会多一次 OCR 与 html2canvas 的字体坑。也别把别人的帖子当示范样本喂进去——机主判断那些帖子质量低，会带偏输出。
 - 讨论区的「未发言 / 已发言」是**服务端状态，只在页面加载时更新**：点完发送同页等 7.5 秒仍是「未发言」，重载后才变「已发言」。所以提交确认只认 `.forum-content .comment-text` 里出现自己的楼层（实测点发送后立刻渲染到首位），别拿状态文案当成功判据；反过来「已发言」可以当作「别再发一次」的护栏。
 - 往讨论区回复框写内容必须用原生 setter + `input` 事件（`fillForumReplyBox`）：`box.value = text` 对 Vue 的 v-model 无效（DOM 有值、组件内 `value` 仍为空、发送按钮保持 `disabled`）。
+- 目录里讨论叶子的完成标志是 `.statistics-box .aside` 里的「已发言」（配 `#icon--yiwancheng` 对勾图标；未完成是「未发言」+ `#icon--weiwancheng`）。只按「已完成/已读」判完成会把 23 条讨论全当成未开始，对已发言的那条反复交棒、反复开标签（`markProgress` 还会把失败计数清掉，永远到不了 `maxAttempts`）。

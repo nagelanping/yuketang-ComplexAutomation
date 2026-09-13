@@ -245,3 +245,12 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - 目录侧：顶层讨论条目与批次里的讨论子项由「一律就地 `FailGate.skip`」改为**交棒**（`autoAI` 关闭时仍是跳过）。
 - 实机观测（回填 `OBSERVE.md`）：提交后新楼层立刻出现在列表首位；状态文案「未发言→已发言」、`讨论区（13→14）`、完成度 9.79%→11.26% 都要**整页重载**才更新；列表只渲染最新 10 条（这解释了此前「计数 13 而 DOM 10 条」）。
 - 新增 `tmp/forum-selftest.cjs`（六项）；`tmp/prompt-sync-check.cjs` 扩成两份 prompt 都查（93 行 homework + 34 行 discussion）。
+
+## 2026-09-13 修复：讨论区完成标志「已发言」未被识别（@version 2.1.1）
+
+机主实机截图：目录里已发言的讨论显示对勾 + 「已发言」，脚本却仍当未完成。
+
+- 实机观测（`ykt-ff`，班级 31317597）：讨论是**章节批次的子项**，要展开才渲染；`.statistics-box .aside` 只有「已发言」（`#icon--yiwancheng`）与「未发言」（`#icon--weiwancheng`）两种文案，既无分数也无百分比。该批次 137 个叶子里 23 条是讨论（1 条已发言是我手动发的那条）。
+- 根因：`V2Runner.getCompletionState()` 只认「已完成/已读」→ 讨论全被当未开始 → 已发言那条每轮都交棒，`handleForum` 见「已发言」返回 true → `markProgress` 清掉失败计数 → 重扫再选中，反复开标签且永远到不了 `maxAttempts`。
+- 修：`getCompletionState()` 与 `Utils.isProgressDone()` 都加「已发言 / 已回复」算 completed；`handleForum` 的「已发言」护栏改用 `Utils.isProgressDone()`，两处口径仍旧一处、同一处改。
+- 新增 `tmp/completion-state-selftest.cjs`（14 例：分数/百分比/文字优先级 + 已发言/未发言）。`OBSERVE.md`、`AGENTS.md` 同步。

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.1.0
+// @version      2.1.1
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -162,11 +162,16 @@
         }, interval);
       });
     },
-    // 内容页完成度：与 V2Runner.getCompletionState() 口径一致——只有 100% / 已完成算完成，
+    // 内容页完成度：与 V2Runner.getCompletionState() 口径一致——只有 100% / 已完成 / 已发言算完成，
     // 98% / 99% 一律当作未完成（临近完成也继续等它走到终值，别提前算完成）。
+    // 「已发言」是讨论区的完成标志（该页没有分数与百分比），讨论区与目录侧都靠它判完成。
     isProgressDone(text) {
       if (!text) return false;
-      return text.includes("100%") || text.includes("已完成");
+      return (
+        text.includes("100%") ||
+        text.includes("已完成") ||
+        text.includes("已发言")
+      );
     },
     // 完成状态文案
     stateLabel(state) {
@@ -3712,7 +3717,7 @@
     }
 
     // 三态分类：'completed' | 'in_progress' | 'not_started'
-    // 对应雨课堂右侧状态列：已完成/已读、(N/M 或 x%) 进行中、未开始/未读
+    // 对应雨课堂右侧状态列：已完成/已读/已发言、(N/M 或 x%) 进行中、未开始/未读/未发言
     getCompletionState(statusText) {
       const text = String(statusText || "");
       // 1. 数字比例优先：N/N 完成，N/M(N<M) 进行中，0/M 未开始
@@ -3731,6 +3736,9 @@
           : "in_progress";
       }
       // 3. 文本状态
+      // 讨论区的完成标志是「已发言」（实测：对勾图标 + 已发言；未发言则是空心图标 + 未发言）。
+      // 它既没有分数也没有百分比，漏掉这条就会被当成未开始，脚本会对同一条讨论反复交棒。
+      if (text.includes("已发言") || text.includes("已回复")) return "completed";
       if (text.includes("已完成") || text.includes("已读")) return "completed";
       if (text.includes("进行中")) return "in_progress";
       // 未开始 / 未读 / 其他默认按未开始处理
@@ -5151,7 +5159,7 @@
         this.panel.log("已关闭 AI 自动答题，讨论区不自动回复", "warning");
         return false;
       }
-      if (/已发言/.test(AiWorkspace.getForumStatusText())) {
+      if (Utils.isProgressDone(AiWorkspace.getForumStatusText())) {
         this.panel.log("本讨论的服务端状态已是「已发言」，无需再发");
         return true;
       }
