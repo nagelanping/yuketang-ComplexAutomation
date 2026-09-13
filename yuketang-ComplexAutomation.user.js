@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.8
+// @version      2.0.9
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -78,6 +78,35 @@
     },
   };
 
+  // 终止闸门：与 PauseGate（只挂起 sleep）不同，这是硬停——
+  // 1) 立刻 abort 在途的 AI 请求，模型返回后不会再往下走（暂停做不到这一点，返回的响应会继续选答案/提交）；
+  // 2) 清掉 pendingAutoStart，刷新页面不会又自动续跑；
+  // 3) 各主循环入口与 Utils.poll 都查它，停在这条线上的等待会立即返回 false；
+  // 4) 面板不再接受「开始」。恢复方式只有刷新页面（本对象随 document 重建）。
+  const StopGate = {
+    stopped: false,
+    abortInflight: null, // 在途 AI 请求的中止句柄，由 Solver.askAI 挂上并在请求落定时清掉
+    onStop: null, // 面板挂的界面处理（日志、按钮）
+    stop() {
+      if (this.stopped) return;
+      this.stopped = true;
+      try {
+        this.abortInflight && this.abortInflight();
+      } catch (_) {
+        // abort 失败无所谓：下面各处入口检查仍会拦住后续步骤
+      }
+      try {
+        Store.clearPendingAutoStart();
+      } catch (_) {}
+      try {
+        this.onStop && this.onStop();
+      } catch (_) {}
+    },
+    isStopped() {
+      return this.stopped;
+    },
+  };
+
   class NavigationStop extends Error {
     constructor() {
       super("navigation-stop");
@@ -105,6 +134,8 @@
     },
     // 每隔一段时间检查某个条件是否满足（通过 checker 函数），如果满足就成功返回；如果超时仍未满足，就失败返回
     poll(checker, { interval = 1000, timeout = 20000 } = {}) {
+      // 已终止时立即按「未满足」返回：不再等待、也不留定时器，让停在等待里的流程马上收尾
+      if (StopGate.isStopped()) return Promise.resolve(false);
       return new Promise((resolve) => {
         const start = Date.now();
         const timer = setInterval(() => {
@@ -888,6 +919,7 @@
                 <button id="btn-setting" class="btn-secondary">模型设置</button>
                 <button id="btn-clear" class="btn-danger">清除失败记录</button>
                 <button id="btn-pause" class="btn-secondary" style="display:none;">暂停</button>
+                <button id="btn-abort" class="btn-danger" style="display:none;">终止</button>
                 <button id="btn-start" class="btn-primary">开始</button>
               </div>
             </div>
@@ -902,6 +934,7 @@
       info: doc.getElementById("info"),
       btnStart: doc.getElementById("btn-start"),
       btnPause: doc.getElementById("btn-pause"),
+      btnAbort: doc.getElementById("btn-abort"),
       btnClear: doc.getElementById("btn-clear"),
       btnSetting: doc.getElementById("btn-setting"),
       settings: doc.getElementById("settings"),
@@ -1125,6 +1158,11 @@
         log("已在运行中，忽略重复启动");
         return;
       }
+      // 已终止（硬停）：不再接受启动，只有刷新页面才能恢复
+      if (StopGate.isStopped()) {
+        log("脚本已终止，需刷新页面才能重新启动", "warning");
+        return;
+      }
       running = true;
       // 若处于暂停态先恢复，避免“开始”后流程仍被闸门挂起
       if (PauseGate.paused) PauseGate.resume();
@@ -1132,6 +1170,7 @@
       ui.btnStart.innerText = "运行中";
       ui.btnPause.style.display = "";
       ui.btnPause.innerText = "暂停";
+      ui.btnAbort.style.display = "";
       startHandler && startHandler();
     };
 
@@ -1141,6 +1180,18 @@
       log(paused ? "已暂停，当前步骤完成后挂起" : "已继续");
     };
     ui.btnPause.onclick = () => PauseGate.toggle();
+
+    // 终止：硬停。在途 AI 请求被 abort，各主循环入口随即退出，pendingAutoStart 也清掉，
+    // 因此刷新页面不会自动续跑；要再跑得重新点「开始」。
+    StopGate.onStop = () => {
+      log("已终止：在途 AI 请求已取消，脚本不再继续（刷新页面后才可重新启动）", "warning");
+      if (PauseGate.paused) PauseGate.resume();
+      ui.btnPause.style.display = "none";
+      ui.btnAbort.style.display = "none";
+      ui.btnStart.innerText = "已终止";
+      running = false;
+    };
+    ui.btnAbort.onclick = () => StopGate.stop();
 
     // 后面赋值给panel
     return {
@@ -1155,10 +1206,13 @@
       },
       resetStartButton(text = "开始") {
         running = false; // 流程结束（完成/出错/非目标页）后允许再次启动
-        ui.btnStart.innerText = text;
+        // 已终止时保持「已终止」文案：这时点它只会得到「需刷新页面」的提示
+        ui.btnStart.innerText = StopGate.isStopped() ? "已终止" : text;
         // 流程结束（完成/出错/非目标页）时收起暂停按钮并复位闸门
         if (PauseGate.paused) PauseGate.resume();
         ui.btnPause.style.display = "none";
+        // 已终止时按钮已被 StopGate.onStop 收起、文案改成「已终止」，别覆盖回去
+        if (!StopGate.isStopped()) ui.btnAbort.style.display = "none";
       },
       // 只放开启动闸门，不动按钮文案：HANDOFF 后目录在等新标签回跳，界面仍应显示「运行中」
       releaseStart() {
@@ -1846,6 +1900,7 @@
         }
       };
       const shouldAttemptResume = (force = false) => {
+        if (StopGate.isStopped()) return; // 已终止：不再自动恢复播放
         if (!shouldResume() || video.ended || this.isNearEnd(video)) return;
         noteProgress();
         return video.paused && (force || Date.now() - lastProgressAt > 1500);
@@ -1945,15 +2000,28 @@
     waitForEnd(media, timeout = 0) {
       return new Promise((resolve) => {
         if (!media) return resolve();
+        // 已终止：立刻收工，不然这段等待会一直挂到视频播完（长视频能拖 1 小时以上）
+        if (StopGate.isStopped()) return resolve();
         if (media.ended) return resolve();
-        let timer;
+        let timer = null;
+        let stopTimer = null;
         const onEnded = () => {
           clearTimeout(timer);
+          clearInterval(stopTimer);
           resolve();
         };
         media.addEventListener("ended", onEnded, { once: true });
+        // 终止时也要把这段等待叫醒（上面只在进入时判了一次）
+        stopTimer = setInterval(() => {
+          if (!StopGate.isStopped()) return;
+          clearInterval(stopTimer);
+          clearTimeout(timer);
+          media.removeEventListener("ended", onEnded);
+          resolve();
+        }, 1000);
         if (timeout > 0) {
           timer = setTimeout(() => {
+            clearInterval(stopTimer);
             media.removeEventListener("ended", onEnded);
             resolve();
           }, timeout);
@@ -2857,6 +2925,11 @@
       const API_URL = this.normalizeEndpoint(saved.url, API_FORMAT);
       const AUTH_METHOD = saved.authMethod || "auto";
       return new Promise((resolve, reject) => {
+        // 已终止：连请求都不发（调用方会在 catch 里按终止处理，不重试）
+        if (StopGate.isStopped()) {
+          reject("已终止");
+          return;
+        }
         if (!API_KEY || API_KEY.includes("sk-xxxx")) {
           const msg = "请在 [模型设置] 中填写有效的 API Key";
           panel.log(msg, "warning");
@@ -2931,15 +3004,26 @@
         const settleResolve = (value) => {
           if (settled) return;
           settled = true;
+          if (StopGate.abortInflight === abortInflight)
+            StopGate.abortInflight = null;
           cleanupFirstChunkTimer();
           resolve(value);
         };
         const settleReject = (err) => {
           if (settled) return;
           settled = true;
+          if (StopGate.abortInflight === abortInflight)
+            StopGate.abortInflight = null;
           cleanupFirstChunkTimer();
           reject(err);
         };
+        // 终止闸门要能在请求在途时把它掐掉：句柄挂在 StopGate 上，落定后清掉（避免误 abort 后来的请求）
+        const abortInflight = () => {
+          try {
+            requestHandle && requestHandle.abort && requestHandle.abort();
+          } catch (_) {}
+        };
+        StopGate.abortInflight = abortInflight;
         const request = {
           method: "POST",
           url: API_URL,
@@ -2948,6 +3032,11 @@
           timeout: saved.stream ? 0 : Config.aiTimeout,
           onload: (res) => {
             cleanupFirstChunkTimer();
+            // 已终止：模型可能刚好在这一刻返回，丢弃响应，不再往下解析（更不再选答案/提交）
+            if (StopGate.isStopped()) {
+              settleReject("已终止");
+              return;
+            }
             if (res.status < 200 || res.status >= 300) {
               const err = `请求失败: HTTP ${res.status} - ${(res.responseText || "").slice(0, 300)}`;
               panel.log(err, "error");
@@ -2999,11 +3088,17 @@
               settleReject(`JSON 解析失败：${e.message || e}`);
             }
           },
-          onerror: () => settleReject("网络错误"),
+          onerror: () =>
+            settleReject(
+              StopGate.isStopped() ? "已终止" : "网络错误",
+            ),
+          // abort 由终止闸门触发：走这里收口，调用方看到「已终止」不再重试
+          onabort: () => settleReject("已终止"),
           ontimeout: () => settleReject("请求超时"),
         };
         if (saved.stream) {
           request.onprogress = (res) => {
+            if (StopGate.isStopped()) return; // 已终止：丢弃在途分片
             if (res.responseText && !streamState.firstChunkReceived) {
               streamState.firstChunkReceived = true;
               cleanupFirstChunkTimer();
@@ -3366,6 +3461,8 @@
     // 返回值：refused（AI 拒答）/ incomplete（缺选项、缺答案、缺提交按钮）/ filled（已填并点了提交）。
     // filled 不等于提交成功：提交按钮点了但服务端/页面未回写时，由调用方按实机确认的判据复核。
     async autoSelectAndSubmit(aiResponse, itemBodyElement) {
+      // 已终止：不选选项、不点提交（提示模型返回后仍会走到这里的正是这条路）
+      if (StopGate.isStopped()) return "incomplete";
       const questionType = this.detectQuestionType(itemBodyElement);
       const parsed = this.parseAIAnswer(aiResponse, questionType);
 
@@ -3450,6 +3547,7 @@
         panel.log("未找到提交按钮，本轮不记为完成", "warning");
         return "incomplete";
       }
+      if (StopGate.isStopped()) return "incomplete"; // 选完选项后可能刚被终止：这一步也别提交
       panel.log("正在提交...");
       submitBtn.click();
       return "filled";
@@ -3503,6 +3601,7 @@
     // 点击一个内容条目：站点会新开标签/新页处理该知识点。目录标签只点击一次并计数（FailGate 兜底防死循环），
     // 随后交棒：不在本目录文档找媒体，也不重载目录。新标签处理完经 returnToSource 把目录重载后 V2Runner 重扫继续。
     async openContentEntry(entry, failKey = "") {
+      if (StopGate.isStopped()) return null; // 已终止：不再点目录条目、不再交棒（交棒会开新标签）
       // 交棒前记下本次条目的 key：新标签会继承一份 sessionStorage 拷贝，遇到 AI 拒绝作答时用它回写本目录
       if (failKey)
         sessionStorage.setItem(Config.storageKeys.handoffKey, failKey);
@@ -3552,6 +3651,7 @@
     }
 
     async run() {
+      if (StopGate.isStopped()) return; // 已终止：不再开始新一轮目录扫描
       this.panel.log("开始按目录进度遍历，定位第一个未完成项...");
       let missingListCount = 0;
       let list = [];
@@ -3817,6 +3917,7 @@
       // 只处理第一个未完成且未超限的子项，处理完整页重载后重新进入复查
       let refusedSubs = 0; // 本批次里有多少子项是「AI 拒答」，决定父批次标拒答还是主动跳过
       for (let i = 0; i < activities.length; i++) {
+        if (StopGate.isStopped()) return false; // 已终止：不再处理批次子项
         const item = activities[i];
         if (!item) continue;
         const tagText = item.querySelector(".tag")?.innerText || "";
@@ -4255,6 +4356,7 @@
       this.panel = panel;
     }
     run() {
+      if (StopGate.isStopped()) return; // 已终止：Pro 旧版路径不再继续
       this.panel.log("准备打开新标签页...");
       const leafDetail = document.querySelectorAll(".leaf-detail");
       let classCount = Store.getProClassCount() - 1;
@@ -4278,6 +4380,7 @@
       this.panel = panel;
     }
     async run() {
+      if (StopGate.isStopped()) return; // 已终止：Pro 路径也不再继续
       preventScreenCheck();
       const readClassStatus = () =>
         document.querySelector(
@@ -4426,6 +4529,8 @@
     }
 
     async returnToSource() {
+      // 已终止：不要把来源目录重载回去（重载会触发 boot 的续跑逻辑）
+      if (StopGate.isStopped()) return false;
       const returnUrl = this.getReturnUrl();
       if (!returnUrl) {
         this.panel.log(
@@ -4459,6 +4564,8 @@
     // 当前知识点处理结束后决定下一步：有来源目录则返回该目录；否则按 ai-workspace 页面自身
     // 知识点列表，从“当前激活项”的下一项继续（激活项每轮从 DOM 现读，不缓存索引/进度）
     async autoSelect() {
+      // 已终止：既不再往前推进知识点，也不把来源目录重载回去（否则目录会接着自动续跑）
+      if (StopGate.isStopped()) return;
       const returnUrl = this.getReturnUrl();
       if (returnUrl) {
         await this.returnToSource();
@@ -4505,6 +4612,7 @@
     }
 
     async handleMedia(route) {
+      if (StopGate.isStopped()) return false; // 已终止：不再起播
       const title =
         AiWorkspace.getActiveLeafTitle() || `${route.type} ${route.leafId}`;
       this.panel.log(`开始播放：${title}`);
@@ -4625,6 +4733,7 @@
     // tab / index 用于提交后的确认：实机观测到 isProblemSubmitted / isExerciseTabAnswered 会在提交后回写为真，
     // 是比「点了提交按钮」可靠的判据。无题号列表的路径没有 tab，退回 DOM 状态判据（isExerciseAnswered）。
     async solveExerciseQuestion(root, label = "", tab = null, index = -1) {
+      if (StopGate.isStopped()) return false; // 已终止：不截图、不问 AI、不提交
       const questionRoot = AiWorkspace.getExerciseQuestionBody(root);
       if (!questionRoot) {
         this.panel.log("未找到题目容器，停止当前轮次", "warning");
@@ -4649,6 +4758,7 @@
 
       const maxRetry = Config.aiMaxRetry;
       for (let retryCount = 0; retryCount < maxRetry; retryCount++) {
+        if (StopGate.isStopped()) return false; // 已终止：不再重试
         try {
           if (retryCount > 0)
             this.panel.log(
@@ -4658,6 +4768,8 @@
           const imageDataUrl = await Solver.captureQuestionImage(questionRoot);
           this.panel.log("请求多模态 AI 获取答案...");
           const aiText = await Solver.askAI(imageDataUrl);
+          // 终止可能就发生在等模型这段时间里：拿到回复也不往下走（否则会继续选答案、点提交）
+          if (StopGate.isStopped()) return false;
           const result = await Solver.autoSelectAndSubmit(aiText, questionRoot);
           if (result === "refused") {
             this.panel.log(
@@ -4725,6 +4837,8 @@
           await Utils.sleep(1200);
           return true;
         } catch (err) {
+          // 终止导致的失败不是「答题失败」，也不再重试
+          if (StopGate.isStopped()) return false;
           this.panel.log(`AI 答题失败：${err}`, "error");
           if (retryCount < maxRetry - 1) await Utils.sleep(5000);
         }
@@ -4804,6 +4918,7 @@
         let allSubmitted = true;
         let didWork = false;
         for (let i = 0; i < tabs.length; i++) {
+          if (StopGate.isStopped()) break; // 已终止：不再处理后面的题
           const currentRoot = AiWorkspace.getExerciseContainer() || root;
           const currentTabs = AiWorkspace.getExerciseQuestionTabs(currentRoot);
           const currentTab = currentTabs[i];
@@ -4860,6 +4975,7 @@
       let allSubmitted = true;
       let didWork = false; // 同题号列表路径：一题都没处理过就不算进展
       for (let i = 0; i < 20; i++) {
+        if (StopGate.isStopped()) break; // 已终止：不再处理后面的题
         const currentRoot = AiWorkspace.getExerciseContainer() || root;
         const questionRoot = AiWorkspace.getExerciseQuestionBody(currentRoot);
         const fingerprint = AiWorkspace.normalizeText(

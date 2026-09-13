@@ -56,7 +56,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - 启动链：
   `function boot|function start|function createPanel`
 - 核心单例：
-  `const Config|const Utils|const Store|const FailGate|const PauseGate|const Player|const AiWorkspace|const Solver|const Decipherer`
+  `const Config|const Utils|const Store|const FailGate|const PauseGate|const StopGate|const Player|const AiWorkspace|const Solver|const Decipherer`
 - 路由 runner：
   `class V2Runner|class ProOldRunner|class ProNewRunner|class AiWorkspaceRunner`
 - ai-workspace 叶子遍历：
@@ -74,7 +74,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
-  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
+  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`、`node tmp/exercise-answered-selftest.cjs`、`node tmp/stop-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -96,7 +96,9 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - `/v2/web/*` -> `V2Runner`，但仅当 `.logs-list` 存在；内容页没有 `V2Runner` 分支——V2 内容页的入口是上面那条 `/ai-workspace/lms-graph/*`（`AiWorkspace.getRoute()` 内部会兜底识别 `v2/web/cloud`、`v2/web/xcloud` 与通用 V2 内容页）。`start()` 里原先还留了一段「检测到 V2 内容页，接管处理」，它在 `start()` 内不可达（`getRoute()` 已经走过并 return），已删除。
 - `/pro/lms/*` -> 有 `.btn-next` 用 `ProNewRunner`，否则 `ProOldRunner`
 
-UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单、功能开关、日志、启动/暂停/重置动作和清除失败动作。
+UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单、功能开关、日志、启动/暂停/终止/重置动作和清除失败动作。
+
+**暂停与终止是两件事**：`PauseGate` 只让 `Utils.sleep` 在计时结束后继续挂起——在途的 AI 请求不受影响，模型返回后流程照样继续选答案、点提交，且 `pendingAutoStart` 还在，刷新页面又会自动续跑；`StopGate` 是硬停：`stop()` 立刻 abort 在途请求（句柄由 `Solver.askAI` 挂在 `StopGate.abortInflight`）、清掉 `pendingAutoStart`、并让面板不再接受「开始」（`invokeStart` 直接返回），恢复只能靠刷新页面（`StopGate` 是模块级对象，随 document 重建）。新增会长时间等待或会继续推进流程的代码时，**必须在入口加 `StopGate.isStopped()` 检查**：当前已覆盖 `Utils.poll`（已终止立刻 resolve(false)）、`Player.waitForEnd` / `observePause`（不再自动恢复播放）、`Solver.askAI`（不发请求、onload/onprogress 丢响应、abort 走 onabort）、`Solver.autoSelectAndSubmit`（不选不提交）、`solveExerciseQuestion`（不截图不重试）、`handleExercise` 两条逐题循环、`handleMedia`、`AiWorkspaceRunner.run`/`autoSelect`/`returnToSource`、`V2Runner.run`/`openContentEntry`/`handleBatch`、两个 Pro Runner 的 `run()`。
 
 ## ai-workspace 执行模型
 

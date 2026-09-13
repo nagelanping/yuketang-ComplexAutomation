@@ -211,3 +211,13 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - 走页签路径后新增一处等待：点页签后先 `Utils.poll` 到该页签变成 active 再读状态，避免读到上一题残留的「已提交」而漏答一题；`getExerciseQuestionLabel()` 把纯数字页签文案补成「第 N 题」。
 
 `AGENTS.md`（作业页结构与「不要从题面往下找」的约束）、`OBSERVE.md`（真实 DOM 与坑）同步。验证：`node --check`、七个自测、`git diff --check` 全通过；实机 `evalf` 确认新范围能取到 5 个页签。
+
+## 2026-09-13 新增「终止」硬停按钮（机主实机报告，@version 2.0.9）
+
+机主报告：脚本很难停住——`暂停` 只挂起 `sleep`，在途的 AI 请求返回后仍会继续选答案/提交；而 `pendingAutoStart` 还在，刷新页面又自动续跑，所以只能「暂停 + 清除失败记录」。
+
+- 新增 `StopGate`（模块级，随 document 重建）：`stop()` 立刻 abort 在途 AI 请求（句柄由 `Solver.askAI` 挂在 `StopGate.abortInflight`）、`Store.clearPendingAutoStart()`（刷新不再续跑）、面板不再接受「开始」。
+- 接入点：`Utils.poll`（已终止立刻 `resolve(false)`，不启定时器）、`Player.waitForEnd`（1s 轮询叫醒，长视频不用等播完）、`Player.observePause.shouldAttemptResume`（不再自动恢复播放）、`Solver.askAI`（不发请求 / onload、onprogress 丢弃 / 新增 onabort）、`Solver.autoSelectAndSubmit`（不选选项、不点提交）、`solveExerciseQuestion`（不截图、不重试，终止导致的失败不当「答题失败」）、`handleExercise` 两条逐题循环、`handleMedia`、`AiWorkspaceRunner.run/autoSelect/returnToSource`、`V2Runner.run/openContentEntry/handleBatch`、两个 Pro Runner 的 `run()`。
+- 面板：新增 `终止` 按钮（开始运行时与 `暂停` 一起出现），点击后按钮收起、启动键文案变「已终止」，再点只提示「需刷新页面才能重新启动」。
+
+`README.md`（按钮说明与暂停/终止的区别）、`AGENTS.md`（两者的语义差异 + 接入点清单 + 锚点）同步。`tmp/poll-selftest.cjs` 扩到五项（新增「已终止立刻 false 且不调 checker」）；新增 `tmp/stop-selftest.cjs`（五项：abort 在途请求 / 清续跑标记 / 幂等 / 已终止立刻返回 / 等待中被叫醒）。验证：`node --check`、八个自测、`git diff --check` 全通过。
