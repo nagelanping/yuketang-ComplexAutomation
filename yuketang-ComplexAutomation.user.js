@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.1.2
+// @version      2.1.4
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -4716,7 +4716,7 @@
         );
         return false;
       }
-      this.panel.log("媒体播放完成，返回课程目录页继续匹配");
+      this.panel.log("本知识点处理结束，返回课程目录页继续匹配");
       await Utils.sleep(1200);
       const sourceWindow = this.getSourceWindow();
       if (sourceWindow) {
@@ -5208,11 +5208,14 @@
         this.panel.log("本讨论的服务端状态已是「已发言」，无需再发");
         return true;
       }
-      const box = await Utils.poll(() => AiWorkspace.getForumReplyBox(), {
-        interval: 500,
-        timeout: 10000,
-      });
-      if (!box) {
+      // Utils.poll 只会 resolve true/false，拿元素要**另读一次 DOM**——写成 `const box = await poll(...)`
+      // 会让 box 变成 `true`，后面所有 box.xxx 都变成「不是函数」，v2.1.3 就是这么踩的。
+      const boxReady = await Utils.poll(
+        () => Boolean(AiWorkspace.getForumReplyBox()),
+        { interval: 500, timeout: 10000 },
+      );
+      const box = AiWorkspace.getForumReplyBox();
+      if (!boxReady || !box) {
         this.panel.log("未找到讨论区回复框，本轮不处理", "warning");
         return false;
       }
@@ -5259,7 +5262,7 @@
       }
       this.panel.log(`拟发表（${reply.length} 字）：${reply.slice(0, 60)}...`);
       if (!this.fillForumReplyBox(box, reply)) {
-        this.panel.log("未能写入回复框，本轮记未推进", "warning");
+        this.panel.log("未能写入回复框（原因见上面的告警），本轮记未推进", "warning");
         return false;
       }
       // 直接赋值不会触发 Vue 的 v-model；写完 input 事件后组件状态异步刷新，发送按钮的
@@ -5290,18 +5293,26 @@
       return true;
     }
 
-    // 原生 setter + input 事件：实测这一串能让 ElInput 的 v-model 生效、发送按钮解锁
+    // 往回复框写内容：直接 `box.value = text` 不触发 Vue 的 v-model（实测 DOM 有值、组件内 value 仍空、
+    // 发送按钮不解锁），要走原生 setter 赋值再补一个 input 事件。
+    // 写失败必须打原因：以前这里 `catch (_) { return false; }` 静默吞掉，排查时只看到「未能写入回复框」，
+    // 查不出到底是取值错了还是写入错了（那次真因是 box 拿到了 poll 的 true，不是元素）。
     fillForumReplyBox(box, text) {
       try {
         const setter = Object.getOwnPropertyDescriptor(
           HTMLTextAreaElement.prototype,
           "value",
         )?.set;
-        if (!setter) return false;
+        if (!setter) throw new Error("原型链上没有 value setter");
         setter.call(box, text);
+        if (box.value !== text)
+          throw new Error(`写入后 DOM 值不符（现有 ${box.value?.length ?? 0} 字）`);
         box.dispatchEvent(new Event("input", { bubbles: true }));
         return true;
-      } catch (_) {
+      } catch (err) {
+        panel.log(
+          `回复框写入失败：${err?.name || ""} ${err?.message || err}`
+        );
         return false;
       }
     }

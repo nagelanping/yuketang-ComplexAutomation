@@ -123,7 +123,8 @@ UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单
 3. 读教师正文 `AiWorkspace.getForumBodyText()`（`.main-text-attachment`）。**只喂任务要求本身，不喂别人的帖子**：机主实机看过，示范帖多是「1.周末回家2.吃了水果」这种一行流水，喂进去会把模型往低质量格式上带。
 4. `Solver.askAI(null, { systemPrompt: Solver.buildForumPrompt().system, userText })` —— **纯文本进纯文本出**。该页 `[class*=encrypted]` 命中 0、样式里没有 `exam_font_`，不存在作业页那种「复制得到错字」的字体混淆，截图只会多一次 OCR 和一轮 html2canvas 的坑。
 5. `AiWorkspace.normalizeForumReply()` 清掉代码块围栏 / 「回复：」前缀 / 整体引号，并在模型照抄 prompt 示范的两行格式时只取 `Formal Response:` 后面的正文（换行要保留，不能用会把换行压成空格的 `normalizeText`）。`Solver.isRefuseReply(raw)` 命中（prompt 约定做不到就返回 `{refuse}`）时不发表，`FailGate.markRefused(...)` 标记为需人工处理——与作业的 `{"type":"refuse"}` 同一条思路，只是标记形态不同。
-6. 填框必须走 `fillForumReplyBox()`：原生 `HTMLTextAreaElement.prototype.value` setter + `input` 事件。直接 `box.value = text` 不会触发 Vue 的 v-model（实测：DOM 值写进了 256 字，组件内 `value` 仍是 0，发送按钮仍带 `disabled`）。
+6. 回复框元素必须「poll 判就绪 + 再读一次 DOM」拿：`Utils.poll()` **只 resolve `true`/`false`，不返回 checker 的值**（项目里 `handleExercise` / `handleMedia` 都是 `const ready = await Utils.poll(...); const el = get...()` 这个写法）。v2.1.3 里我写成 `const box = await Utils.poll(() => getForumReplyBox(), ...)`，`box` 就成了 `true`，后面 `box.setRangeText is not a function` / 没有 setter / 没有 `parentElement` 全冒出来——真因是取值写错，不是环境。
+   填框用 `fillForumReplyBox()`：直接 `box.value = text` 不触发 Vue 的 v-model（实测 DOM 有值、组件内 `value` 仍空、发送按钮不解锁），要走 `HTMLTextAreaElement.prototype` 的 `value` setter 赋值 + 补一个 `input` 事件；写完后**回读 `box.value === text` 校验**，失败必须 `panel.log` 出原因（早期版本 `catch (_) { return false; }` 静默吞掉，排查时只看到「未能写入回复框」，无线索）。
 7. 判据：等 `.prompt-send-btn` 摘掉 `disabled`（这是「站点确实收到了正文」的信号）→ `click()` → 轮询 `.forum-content .comment-text` 里出现以本次正文开头的那条。实测点发送后条目**立刻**渲染到列表首位，而状态文案 `div.f12.blue-color` 从「未发言」变「已发言」要**整页重载**才更新（同页等 7.5 秒仍是「未发言」）——所以确认只认楼层，最终状态由目录重扫核对，别拿状态文案当提交成功的判据。
 
 ## V2 执行模型
@@ -367,5 +368,7 @@ API 行为：
 - 交棒子标签拿到的是来源目录 sessionStorage 的**拷贝**：子标签自己写 `ykt_fail_counts`，目录读不到（实测同一 key 两边计数不同）。跨标签回写只能写 `window.opener.sessionStorage`，且 `openContentEntry` 必须在点击**之前**写好 `ykt_handoff_key`，因为拷贝是在新标签创建那一刻生成的。
 - 讨论区回复**不要改回截图问 AI**：该页无字体混淆、教师正文是纯文本（`.main-text-attachment`），截图只会多一次 OCR 与 html2canvas 的字体坑。也别把别人的帖子当示范样本喂进去——机主判断那些帖子质量低，会带偏输出。
 - 讨论区的「未发言 / 已发言」是**服务端状态，只在页面加载时更新**：点完发送同页等 7.5 秒仍是「未发言」，重载后才变「已发言」。所以提交确认只认 `.forum-content .comment-text` 里出现自己的楼层（实测点发送后立刻渲染到首位），别拿状态文案当成功判据；反过来「已发言」可以当作「别再发一次」的护栏。
-- 往讨论区回复框写内容必须用原生 setter + `input` 事件（`fillForumReplyBox`）：`box.value = text` 对 Vue 的 v-model 无效（DOM 有值、组件内 `value` 仍为空、发送按钮保持 `disabled`）。
+- 往讨论区回复框写内容必须走 `fillForumReplyBox`：`box.value = text` 对 Vue 的 v-model 无效（DOM 有值、组件内 `value` 仍为空、发送按钮保持 `disabled`）。别忘了先回读 `box.value === text` 再发 `input`。
+- **`Utils.poll()` 只回 `true`/`false`**，别把元素/值从它里面取（`const box = await Utils.poll(() => getBox())` → `box === true`）。要元素就 poll 判就绪后**另读一次 DOM**。
+- 别在 `catch` 里静默 `return false`：v2.1.2 的 `fillForumReplyBox` 就是这么把「未能写入回复框」变成无线索的；先让它把 `err.name/message` 打出来，再谈修。
 - 目录里讨论叶子的完成标志是 `.statistics-box .aside` 里的「已发言」（配 `#icon--yiwancheng` 对勾图标；未完成是「未发言」+ `#icon--weiwancheng`）。只按「已完成/已读」判完成会把 23 条讨论全当成未开始，对已发言的那条反复交棒、反复开标签（`markProgress` 还会把失败计数清掉，永远到不了 `maxAttempts`）。

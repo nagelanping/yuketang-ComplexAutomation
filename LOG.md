@@ -264,3 +264,17 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - `handleForum()` 的拒答分支从 `/^refuse$/` 换成 `Solver.isRefuseReply(raw)`（判 raw，不判清洗后的正文），日志写明原因，`FailGate.markRefused` 标记需人工处理——与作业 refuse 同思路。
 - `normalizeForumReply()` 现在会把「Formal Response:」前面的推理行去掉，只发正文。
 - `tmp/forum-selftest.cjs` 增拒答用例（6 正 4 负）与 Formal Response 用例。
+
+## 2026-09-13 修「未能写入回复框」：根因是 `Utils.poll` 的返回被当成元素（@version 2.1.4）
+
+> 中间有一版 2.1.3 只在本机浏览器跑过一次、**没有提交**：当时误判成「用户脚本沙箱 / 跨 realm」，
+> 写了四段降级写入。机主回贴的日志把真因暴露了，那版已废弃，下面的实现才是最终版。
+
+机主实机日志：讨论区走到 `拟发表（164 字）` 后打 `未能写入回复框，本轮记未推进`。
+
+- 复现：在测试浏览器（无用户脚本管理器）打开同一条讨论（优势测量 leaf 84703581），同一串操作写值成功 → 页面结构从来不是原因。
+- **真因**（机主回贴的日志）：四种写法分别报「原型链上没有 value setter」「`box.setRangeText is not a function`」「`box.focus is not a function`」「父元素上没有 `__vue__`」——`box` 根本不是元素。因为 `const box = await Utils.poll(() => AiWorkspace.getForumReplyBox(), …)`：**`Utils.poll()` 只 resolve `true`/`false`**，于是 `box === true`。项目里别处都写 `const ready = await Utils.poll(...); const el = get...()`，只有这一处破了例。
+- 修：改成 poll 判就绪 + 另读一次 DOM（`boxReady` / `box` 分开）；`fillForumReplyBox` 退回最小实现（`HTMLTextAreaElement.prototype` 的 value setter + `input` 事件），但**加了回读校验**（`box.value !== text` 即失败）并**把失败原因打出来**——那次之所以查不动，就是因为它在 `catch` 里静默 `return false`。
+- 顺带修 `returnToSource()` 的日志文案（原写「媒体播放完成」，这条路径现在也服务作业与讨论区）。
+- `tmp/forum-selftest.cjs` 重写为 8 组断言，新增「拿错对象（`true`）必须返回 false 并打日志」这条回归用例。
+- 复现/清理记录：调试时往 84703581 的回复框写过「测试文本 123」，事后已清空，没有发送。
