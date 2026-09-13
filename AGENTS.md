@@ -86,6 +86,8 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 `boot()` -> 跳过 iframe -> `createPanel()` -> 加载 `pendingAutoStart` -> `start()` 路由分发。
 
+`createPanel()` 里 `invokeStart()` 带一个 `running` 闸门：连点「开始」或在 1.2 秒自动恢复窗口内手点，都只会启动一个 Runner（否则同一目录并发跑两份，同一条目点两次、开两个标签、FailGate 计数双份）。`resetStartButton()` 负责把闸门放开。
+
 `start()` 中的路由分发：
 
 - `/ai-workspace/lms-graph/*` -> `AiWorkspaceRunner`
@@ -176,13 +178,17 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 
 - 存储 key：`ykt_fail_counts`
 - `key(...parts)` 构建稳定的 课堂/标题/索引 key。
-- `bump(key)` 仅在 handler 返回无进展后递增尝试次数。
+- `bump(key)` 仅在 handler 返回无进展后递增尝试次数。**负数不是计数而是哨兵**（`-1` 跳过 / `-2` 拒答），`bump` 遇到哨兵原样返回——否则 `-2 + 1 = -1` 会把「拒答」悄悄改写成「主动跳过」。
 - `exhausted(key)` 在 `maxAttempts` 次后跳过。
 - `skip(key)` 标记有意跳过（考试、未知类型、被禁用的作业）。
 - `skipped(key)` 检查有意跳过状态。
-- `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。目录扫描跳过并打 warning。
+- `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。`V2Runner.run()` 与 `handleBatch()` 两处扫描都要处理：打一条 `{标题}：AI 拒绝作答，已跳过（请人工处理）` 后 `skip(key)` 降级成主动跳过，免得每轮重扫都重进该条目、反复刷同一条警告。
+- `markProgress(key)`：子标签确认本知识点做成了（`handleMedia` / `handleExercise` 返回 true）时清掉来源目录上的计数。目录侧只负责交棒、看不到内容页结果，若只在交棒时 `bump`，服务端回写慢的条目（作业实测第 3 轮才翻成已完成）会在做完之前就数满 `maxAttempts` 被跳过。**「跳过不处理」的路径不算进展**（`AiWorkspaceRunner.run()` 的未知类型分支返回 true 但不报告进展），否则目录会为它反复交棒。
+- `markRefused` / `markProgress` 都走内部 `_writeToOpener(key, value)`：写的是 `window.opener.sessionStorage`（子标签只有自己那份拷贝，写自己那份目录读不到），`value === null` 表示删键；拿不到 opener 时返回 false、静默退回本页行为。
 - `reset(key)` 在条目或批次子项有进展时清零计数。
 - `clear()` 与 `Store.clearPendingAutoStart()` 一起接到面板的清除失败动作上。
+
+`node tmp/failgate-selftest.cjs` 覆盖计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默五项（用桩模拟「目录那份 + 子标签拷贝」两个 sessionStorage）。
 
 有意使用 sessionStorage 语义：关闭标签即清空。不要用 FailGate 跨会话记忆课程进度。
 
@@ -248,6 +254,7 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 3. 检测题型。
 4. 通过分层选择器解析可见的选项容器/元素。
 5. 通过 `GM_xmlhttpRequest` 调用 OpenAI 兼容的多模态 API。
+   `askAI(imageDataUrl)` 只吃截图：题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `SystemPrompt.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。
 6. 解析模型响应并选择/提交答案。
 
 API 行为：
@@ -310,6 +317,7 @@ API 行为：
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
 - 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
 - `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
+- `pendingAutoStart` 的 `classroomId` 与 `returnUrl` 必须成对：`Store.setPendingAutoStart` 在**换课堂且这次没有新目录地址**时直接返回、不覆盖旧记录——否则会留下「课堂 B 的 id + 课堂 A 的目录地址」，`getReturnUrl()` 的 classroomId 校验照样通过，标签却被导航去另一个课堂。
 - 讨论（`taolun`/`forum`）子项**一律**在 `handleBatch` 里就地 `FailGate.skip`（v1.4.1 起，不再看用户开关）：发帖内容得先由模型生成，脚本没有实现，交棒进论坛页的 `AiWorkspaceRunner` 也不处理该类型，交棒只会得到「开标签→不处理→关标签→再交棒」空转、满 `maxAttempts` 才跳过。`autoComment` 开关与面板勾选框已删除；未来接 `askAI` 的流程写在 `handleBatch` 该分支上方的注释里（新标签读主题与楼层 → askAI 生成回复 → 填框提交 → `returnToSource`）。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
 - `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 在既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `AUDIT.md` 第 13 条）。

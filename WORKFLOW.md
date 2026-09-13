@@ -92,6 +92,7 @@ rg -n '@version|Config.version' yuketang-ComplexAutomation.user.js
 | K. 统一完成度阈值                |         16 | 已完成               | 无（机主指示：临近完成也算未完成）                      |
 | L. `gdufemooc.cn` 支持范围      |          5 | 已完成               | 无（机主：MOOC 与雨课堂切割，不关注）                   |
 | M. 可读性与仓库卫生              |     第五节 | 可选                 | A–L 完成后仍有明确收益再做                             |
+| P. 审查发现的逻辑修正            |    审查批 | 已改代码，待实机验证 | 拒答条目在顶层目录的实机确认                            |
 
 推荐顺序：A → B → C → D → E → F。G–L 按实机样本决定解锁。M 不与缺陷修复混做。
 
@@ -491,6 +492,39 @@ $ node --check yuketang-ComplexAutomation.user.js   # 通过
 
 未跑 Firefox 复验：改的是跳过分支与面板结构，需机主在实机确认面板显示与讨论子项日志。
 
+## P. 子代理审查发现的一批逻辑修正（机主指示：一起修）
+
+审查范围：全文静态审查（高/中/低共 12 条）。本次修其中 6 条机械性缺陷，其余 6 条按结论保留或待实机。
+
+### 修改范围
+
+1. **拒答哨兵只有批次路径会读（高，工作包 N 的半成品）**：`V2Runner.run()` 的顶层扫描补上 `refused(-2)` 分支——打 `{标题}：AI 拒绝作答，已跳过（请人工处理）` 后 `skip(key)` 降级，`skippedInPlace++` 后 `continue`。`FailGate.bump` 遇到负数哨兵原样返回，避免 `openContentEntry` 的 `bump` 把 `-2` 加成 `-1`（把「拒答」改写成「主动跳过」）。`handleBatch` 的同类分支也补 `skip` 降级与 `continue`。
+2. **交棒条目计数只增不减（中）**：新增 `FailGate.markProgress(key)`（走与 `markRefused` 同一个 `_writeToOpener`），`AiWorkspaceRunner.run()` 在 `handleMedia` / `handleExercise` 确认做成时清掉来源目录的计数；`progressed` 与 `ok` 分开，未知类型分支只 `ok = true`、不报进展，否则目录会为它反复交棒。
+3. **跨课堂的 `pendingAutoStart` 串味（中）**：`Store.setPendingAutoStart` 在换课堂且本次没有新目录地址时直接返回，不覆盖旧记录。
+4. **「开始」没有运行态闸门（中）**：`invokeStart()` 加 `running` 标志，重复点击只打一条「已在运行中，忽略重复启动」；`resetStartButton()` 放开。
+5. **`askAI` 的两个死参数（中）**：签名改回 `askAI(imageDataUrl)`，去掉调用点的 `optionCount` / `questionType` 实参（函数体从未读取，prompt 也不接收）。
+6. **`handleBatch` 里不可达的 `taolun` 条件（低）**：内容子项判断里删掉 `tagHref.includes("taolun")`（讨论区已在前面拦截并 return）。
+
+### 未修（结论）
+
+- **`handleClassroom` 的 `waitForEnd` 无超时（高）**：属工作包 I，机主已定「当前可正常工作，需实机检测」。
+- **`dispatchUserLikeClick` 连发两次 click（中，疑似）** 与 **`findPlayButton` 首选 `.play-btn-tip`（中，疑似）**：要先在实机确认站点播放键是不是 toggle、`.play-btn-tip` 在 ai-workspace 里是否 `xt-tip`，不能按静态推断改。
+- **`isProgressDone` 与 `getCompletionState` 差一个「已读」（低偏中）**：口径按机主指示统一为「只认 100% / 已完成」，「已读」是图文类状态文案，视频路径不会出现；保持现状并记在文档里。
+- **`getSlideReadStatus` 子串匹配未读（低，疑似）** 与 **`originalTextSnapshots` 只写不清（低，疑似）**：需实机样本，暂不动。
+- **两个 Pro Runner 对 `pro_lms_classCount` 差 1（低，疑似）**：属工作包 J，机主已定先保留。
+
+### 验证
+
+```sh
+node --check yuketang-ComplexAutomation.user.js
+node tmp/failgate-selftest.cjs   # 新增：计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默
+node tmp/parse-answer-selftest.cjs
+node tmp/poll-selftest.cjs
+node tmp/prompt-sync-check.cjs
+git diff --check
+```
+
+实机待验（机主）：拒答条目在**顶层**（不是批次内）也应只被提示一次并跳过；长作业在服务端状态回写期间不再被 `maxAttempts` 提前跳过。
 ## 完成维护
 
 完成任务后维护该文档，在已完成的对应条目下进行简要说明。

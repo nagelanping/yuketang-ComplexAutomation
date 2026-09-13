@@ -112,3 +112,18 @@ README 同步：功能列表注明讨论区自动回复尚未实现；「模型�
 J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」，因此 AUDIT 15（observePause cleanup）与 AUDIT 17（Pro 持久化游标）也暂不做。
 
 版本：`@version` 1.4.1 → **2.0.0**（F/G/K/L 一批：答题提交结果三态、选项字母 A–Z、完成度阈值统一、MOOC 分支删除）。
+
+## 2026-09-13 工作包 P：子代理审查发现的一批逻辑修正（机主指示一起修）
+
+修 6 条：
+
+1. 拒答哨兵 `-2` 只有 `handleBatch` 会读（工作包 N 的半成品）：`V2Runner.run()` 顶层扫描补上 `refused` 分支（提示一次后 `skip` 降级），`FailGate.bump` 遇负数哨兵原样返回，避免 `-2 + 1 = -1` 把拒答改写成主动跳过。
+2. 交棒条目计数只增不减：新增 `FailGate.markProgress(key)`（复用 `_writeToOpener`），`AiWorkspaceRunner.run()` 在 media/exercise 确认做成时清掉来源目录计数；`progressed` 与 `ok` 分开，未知类型分支只算 `ok` 不算进展。
+3. `setPendingAutoStart` 跨课堂串味：换课堂且本次无新目录地址时不覆盖旧记录。
+4. 「开始」无运行态闸门：`invokeStart` 加 `running`，重复点击只记一条日志，`resetStartButton` 放开。
+5. `askAI` 的 `optionCount` / `questionType` 死参数删除（函数体从未读取，prompt 也不接收）。
+6. `handleBatch` 内容子项判断里不可达的 `taolun` 条件删除。
+
+未修（结论见 WORKFLOW P）：`handleClassroom` 无超时属工作包 I（机主定保留）；`dispatchUserLikeClick` 双击与 `findPlayButton` 首选提示元素需实机确认；`getSlideReadStatus` / `originalTextSnapshots` / Pro 游标差 1 属疑似或工作包 J。
+
+新增 `tmp/failgate-selftest.cjs`（桩模拟目录那份与子标签拷贝两个 sessionStorage）：计数、跳过哨兵、拒答哨兵、进展清零、无 opener 静默五项通过。`@version` 2.0.0 → 2.0.1。

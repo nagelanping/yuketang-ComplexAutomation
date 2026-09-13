@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.0
+// @version      2.0.1
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -308,6 +308,10 @@
     setPendingAutoStart(classroomId = "", returnUrl = "") {
       if (!classroomId) return;
       const prev = this.getPendingAutoStart() || {};
+      // classroomId 与 returnUrl 必须成对：换课堂时若只换 id、沿用旧目录地址，
+      // getReturnUrl() 的 classroomId 校验会通过，却把标签导航去另一个课堂的目录。
+      // 另外，跨课堂且没有新目录地址时不要覆盖——那会丢掉另一个课堂正在用的恢复点。
+      if (!returnUrl && prev.returnUrl && prev.classroomId !== classroomId) return;
       localStorage.setItem(
         Config.storageKeys.pendingAutoStart,
         JSON.stringify({
@@ -356,6 +360,9 @@
     },
     bump(key) {
       const map = this._read();
+      // 负数不是计数而是哨兵（-1 主动跳过 / -2 AI 拒答）：-2 + 1 会变成 -1，
+      // 把「拒答」悄悄改写成「主动跳过」，所以哨兵值原样返回。
+      if (Number(map[key]) < 0) return Number(map[key]);
       map[key] = Number(map[key] || 0) + 1;
       this._write(map);
       return map[key];
@@ -363,9 +370,9 @@
     exhausted(key) {
       return this.get(key) >= this.maxAttempts;
     },
-    // AI 拒绝作答：题目无法由脚本完成，只能人工介入。交棒的新标签拿到的是目录 sessionStorage 的拷贝，
-    // 写自己那份目录看不到，所以这里直接改 window.opener 的那份（同源），由目录重扫时跳过该条目。
-    markRefused(key) {
+    // 交棒子标签拿到的是目录 sessionStorage 的**拷贝**，写自己那份目录看不到，
+    // 所以跨标签回写必须写 window.opener 的那份（同源）。value 传 null 表示删掉该 key。
+    _writeToOpener(key, value) {
       if (!key) return false;
       let target = null;
       try {
@@ -379,9 +386,20 @@
           target.getItem(Config.storageKeys.failCounts),
           {},
         ) || {};
-      map[key] = -2;
+      if (value === null) delete map[key];
+      else map[key] = value;
       target.setItem(Config.storageKeys.failCounts, JSON.stringify(map));
       return true;
+    },
+    // AI 拒答：题目无法由脚本完成，只能人工介入。标记来源目录跳过该条目。
+    markRefused(key) {
+      return this._writeToOpener(key, -2);
+    },
+    // 子标签确认本知识点确实做成了：清掉来源目录上的失败计数。
+    // 目录侧只负责交棒，看不到内容页结果，若只在交棒时 bump，服务端回写慢的条目
+    //（OBSERVE.md 记录过作业第 3 轮才翻成已完成）会在做完之前就数满 maxAttempts 被跳过。
+    markProgress(key) {
+      return this._writeToOpener(key, null);
     },
     refused(key) {
       return this._read()[key] === -2;
@@ -1060,7 +1078,15 @@
     };
 
     let startHandler = null;
+    let running = false;
     const invokeStart = () => {
+      // 运行态闸门：连点「开始」、或 boot 的自动恢复与手点重叠时，同一目录会并发跑两个 Runner，
+      // 结局是同一条目被点两次（两个新标签、双份 FailGate 计数）。这里挡掉重复启动。
+      if (running) {
+        log("已在运行中，忽略重复启动");
+        return;
+      }
+      running = true;
       // 若处于暂停态先恢复，避免“开始”后流程仍被闸门挂起
       if (PauseGate.paused) PauseGate.resume();
       log("正在启动…");
@@ -1089,6 +1115,7 @@
         invokeStart();
       },
       resetStartButton(text = "开始") {
+        running = false; // 流程结束（完成/出错/非目标页）后允许再次启动
         ui.btnStart.innerText = text;
         // 流程结束（完成/出错/非目标页）时收起暂停按钮并复位闸门
         if (PauseGate.paused) PauseGate.resume();
@@ -2724,7 +2751,8 @@
         chat_template_kwargs: { enable_thinking: false },
       };
     },
-    async askAI(imageDataUrl, optionCount = 0, questionType = "choice") {
+    // 只吃截图：题型判定与选项数都不下发给模型（prompt 是固定 system 文本，见 buildPrompt 与 SystemPrompt.md）
+    async askAI(imageDataUrl) {
       const saved = Store.getAIConf();
       const API_KEY = saved.key;
       const MODEL_NAME = saved.model;
@@ -3478,6 +3506,14 @@
         if (statusState === "completed") continue; // 顶层已完成（含整批完成）一律跳过
         const failKey = FailGate.key(this.classroomId, i, title);
         if (FailGate.skipped(failKey)) continue; // 主动跳过项（考试/未知/功能关闭），静默略过
+        // AI 拒答（子标签经 opener 回写哨兵 -2）：脚本答不完这份作业，提示一次后按主动跳过处理，
+        // 免得每轮重扫都重进这份作业、也免得刷同一条警告。
+        if (FailGate.refused(failKey)) {
+          this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
+          FailGate.skip(failKey);
+          skippedInPlace++;
+          continue;
+        }
         if (FailGate.exhausted(failKey)) {
           skippedByLimit++;
           this.panel.log(
@@ -3703,6 +3739,7 @@
             `${title}：AI 拒绝作答，已跳过（请人工处理）`,
             "warning",
           );
+          FailGate.skip(subKey); // 提示一次后按主动跳过处理，后续重扫静默
           continue;
         }
         if (FailGate.exhausted(subKey)) {
@@ -3739,7 +3776,6 @@
           tagText === "音频" ||
           tagHref.includes("shipin") ||
           tagHref.includes("tuwen") ||
-          tagHref.includes("taolun") ||
           isHomework
         ) {
           return await this.openContentEntry(item, subKey);
@@ -4507,11 +4543,7 @@
             );
           const imageDataUrl = await Solver.captureQuestionImage(questionRoot);
           this.panel.log("请求多模态 AI 获取答案...");
-          const aiText = await Solver.askAI(
-            imageDataUrl,
-            optionCount,
-            questionType,
-          );
+          const aiText = await Solver.askAI(imageDataUrl);
           const result = await Solver.autoSelectAndSubmit(aiText, questionRoot);
           if (result === "refused") {
             this.panel.log(
@@ -4707,17 +4739,22 @@
         return;
       }
       let ok = false;
+      let progressed = false; // 「本页确实做成了」与「跳过不处理」要分开：只有前者清来源目录的失败计数
       try {
         if (AiWorkspace.isMediaRouteType(route.type)) {
           ok = await this.handleMedia(route);
+          progressed = ok;
         } else if (AiWorkspace.isExerciseRouteType(route.type)) {
           ok = await this.handleExercise(route);
+          progressed = ok;
         } else if (route.type === "content") {
           ok = await this.handleMedia(route);
           if (!ok && Store.getFeatureConf().autoAI) {
             ok = await this.handleExercise(route);
           }
+          progressed = ok;
         } else {
+          // 未处理的类型：不算进展，否则目录会为它反复交棒（计数被清掉，永远不到 maxAttempts）
           this.panel.log(
             `当前类型为 ${route.type}，暂不自动处理此类型，自动跳过`,
             "warning",
@@ -4729,6 +4766,11 @@
         // 处理抛错也必须继续走 autoSelect：目录经新标签交棒时靠本页 returnToSource 重载目录，
         // 若在此中断会让目录标签永久停等。记日志后按未完成继续。
         this.panel.log(`当前知识点处理异常：${err?.message || err}`, "warning");
+      }
+      if (progressed) {
+        // 本知识点确实做成了：清掉来源目录上这一条的失败计数。
+        // 目录侧只在交棒前 bump、看不到内容页结果，服务端回写慢的条目（作业）否则会在做之前数满被跳过。
+        FailGate.markProgress(sessionStorage.getItem(Config.storageKeys.handoffKey));
       }
       if (!ok) {
         this.panel.log("当前项未能确认完成，仍继续下一项", "warning");
