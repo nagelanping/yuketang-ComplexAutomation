@@ -93,7 +93,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 `start()` 中的路由分发：
 
 - `/ai-workspace/lms-graph/*` -> `AiWorkspaceRunner`
-- `/v2/web/*` -> `V2Runner`，但仅当 `.logs-list` 存在；内容页若识别为 V2 内容路由则交给 `AiWorkspaceRunner`，否则直接拒绝，避免在错误页面上启动目录循环
+- `/v2/web/*` -> `V2Runner`，但仅当 `.logs-list` 存在；内容页没有 `V2Runner` 分支——V2 内容页的入口是上面那条 `/ai-workspace/lms-graph/*`（`AiWorkspace.getRoute()` 内部会兜底识别 `v2/web/cloud`、`v2/web/xcloud` 与通用 V2 内容页）。`start()` 里原先还留了一段「检测到 V2 内容页，接管处理」，它在 `start()` 内不可达（`getRoute()` 已经走过并 return），已删除。
 - `/pro/lms/*` -> 有 `.btn-next` 用 `ProNewRunner`，否则 `ProOldRunner`
 
 UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单、功能开关、日志、启动/暂停/重置动作和清除失败动作。
@@ -186,6 +186,7 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - `skipped(key)` 检查有意跳过状态。
 - `markRefused(key)` / `refused(key)`：哨兵 `-2`，表示「AI 明确拒答，脚本无法完成该条目」。`V2Runner.run()` 与 `handleBatch()` 两处扫描都要处理它，且**提示只打一次**（`warnedRefused` / `markRefusedWarned`，存在 sessionStorage 的 `ykt_refused_warned` 里——目录每轮交棒都会整页导航回来、模块级 Set 会随 document 重建，只有落在 sessionStorage 才真的一次；`clear()` 一并清掉）。
 - 拒答项在顶层扫描里**只计入 `refusedSeen`，不计入 `skippedInPlace`**：`skippedInPlace > 0` 会触发「原地跳过→重载」，而拒答标记每轮都会再次命中该分支，计进去就是无限重载；标记也不降级成 `skip(-1)`，否则终结判定分不出「需人工处理」和「已完成」（`refusedSeen` 参与 `遍历结束…请手动检查` 那条日志）。
+- `markRefused(key)` 写的是 **opener** 那份（给交棒子标签用）；目录要标自己表里的 key（例如「批次里只剩拒答子项」）用 `markRefusedLocal(key)`。`handleBatch` 收尾时若本批有拒答子项，就把父批次 key 标成 `-2` 而不是 `skip(-1)`，顶层重扫时才会计入 `refusedSeen`——否则收尾会误报「课程已全部完成」。
 - `markProgress(key)`：子标签确认本知识点做成了时清掉来源目录上的计数。目录侧只负责交棒、看不到内容页结果，若只在交棒时 `bump`，服务端回写慢的条目（作业实测第 3 轮才翻成已完成）会在做完之前就数满 `maxAttempts` 被跳过。
 - 「做成了」的判据必须严：`AiWorkspaceRunner.run()` 里 `progressed` 与 `ok` 分开——未知类型分支（`ok = true`）**不算进展**，否则目录会为它反复交棒、永远到不了 `maxAttempts`；`handleExercise` 也只在真遇到「已提交」或成功作答的题时才返回 true（`didWork && allSubmitted`），题号列表为空、题面读不到、`autoAI` 关闭这些「什么都没做」的路径一律返回 false。
 - `markRefused` / `markProgress` 都走内部 `_writeToOpener(key, value)`：写的是 `window.opener.sessionStorage`（子标签只有自己那份拷贝，写自己那份目录读不到），`value === null` 表示删键。整个读写都包在 try 里：拿不到 opener、跨源、窗口正在导航时返回 false，**绝不把异常抛给调用方**（它挂在 `autoSelect()` 之前，抛出去会让目录永久停等）。

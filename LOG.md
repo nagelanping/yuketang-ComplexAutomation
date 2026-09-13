@@ -153,3 +153,14 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 有意保留（记入 AGENTS）：闸门放开后，交棒窗口内手动再按「开始」不会被挡，会重派发同一条目——为保住手动恢复能力付的价。
 
 验证：`node --check`、四个自测（failgate 扩到六项）、`git diff --check` 全通过。`@version` 2.0.2 → 2.0.3。
+
+## 2026-09-13 工作包 P 第三轮复查：子代理复看 d762905 后的回修
+
+1. `start()` 里我加的课堂判据是死代码：`getRoute()` 内部已兜底调用 `getGenericV2ContentRoute()`，上面 aiRoute 分支 return 之后，v2 分支里的 `contentRoute` 恒为 null。整段「检测到 V2 内容页，接管处理」删除并留注释。
+2. 批次内拒答不进 `refusedSeen`：当它是最后一项时收尾会误报「课程已全部完成」。`handleBatch` 改为统计 `refusedSubs`，有拒答子项时用新增的 `FailGate.markRefusedLocal()` 把父批次 key 标成 -2（目录自己那份，不走 opener）。
+3. `warnedRefused` / `_readRefusedWarned` 补 try（sessionStorage 不可用不再打断扫描）。
+4. 自测桩改用从源码提取的真实 key 名，并补 `markRefusedLocal` 与 `clear()` 清对 key 的断言（八项）。
+
+未修（结论）：xcloud 页面的 classroom id 解析需实机 URL 样本，已记入 OBSERVE 待验证；`markProgress` 不清「已提示」标记属可接受语义；交棒窗口手动重开为已知取舍。
+
+验证：`node --check`、四个自测、`git diff --check` 全通过。`@version` 2.0.3 → 2.0.4。

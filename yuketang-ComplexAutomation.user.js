@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.3
+// @version      2.0.4
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -427,18 +427,35 @@
       return this._readRefusedWarned().includes(key);
     },
     markRefusedWarned(key) {
-      const list = this._readRefusedWarned();
-      if (list.includes(key)) return;
-      list.push(key);
-      sessionStorage.setItem(
-        Config.storageKeys.refusedWarned,
-        JSON.stringify(list),
-      );
+      try {
+        const list = this._readRefusedWarned();
+        if (list.includes(key)) return;
+        list.push(key);
+        sessionStorage.setItem(
+          Config.storageKeys.refusedWarned,
+          JSON.stringify(list),
+        );
+      } catch (err) {
+        // sessionStorage 不可用时只是提示会重复，不能让异常打断目录扫描
+      }
     },
     _readRefusedWarned() {
-      const raw = sessionStorage.getItem(Config.storageKeys.refusedWarned);
-      const list = Utils.safeJSONParse(raw, []);
-      return Array.isArray(list) ? list : [];
+      try {
+        const raw = sessionStorage.getItem(Config.storageKeys.refusedWarned);
+        const list = Utils.safeJSONParse(raw, []);
+        return Array.isArray(list) ? list : [];
+      } catch (err) {
+        return [];
+      }
+    },
+    // 目录自己那份表上的拒答标记。markRefused 是给交棒子标签用的（写 opener），
+    // 目录要标自己的 key（例如「某批次里只有拒答子项」）得走这个。
+    markRefusedLocal(key) {
+      if (!key) return false;
+      const map = this._read();
+      map[key] = -2;
+      this._write(map);
+      return true;
     },
     clear() {
       sessionStorage.removeItem(Config.storageKeys.failCounts);
@@ -3747,6 +3764,7 @@
       }
 
       // 只处理第一个未完成且未超限的子项，处理完整页重载后重新进入复查
+      let refusedSubs = 0; // 本批次里有多少子项是「AI 拒答」，决定父批次标拒答还是主动跳过
       for (let i = 0; i < activities.length; i++) {
         const item = activities[i];
         if (!item) continue;
@@ -3770,6 +3788,7 @@
             FailGate.markRefusedWarned(subKey);
             this.panel.log(`${title}：AI 拒绝作答，已跳过（请人工处理）`, "warning");
           }
+          refusedSubs++;
           continue;
         }
         if (FailGate.exhausted(subKey)) {
@@ -3817,7 +3836,12 @@
 
       // 没有可处理子项：子项或已全部完成、或全部已跳过/超限。
       // 标记批量顶层已跳过，避免 run() 再为这个推不动的批量浪费整页重载。
-      if (parentFailKey) FailGate.skip(parentFailKey);
+      // 但如果跳过的原因里有「子项被 AI 拒答」，父批次要标成拒答而不是主动跳过：
+      // 顶层重扫时才会把它算进 refusedSeen，收尾日志才不会把「需人工处理」说成「课程已全部完成」。
+      if (parentFailKey) {
+        if (refusedSubs > 0) FailGate.markRefusedLocal(parentFailKey);
+        else FailGate.skip(parentFailKey);
+      }
       this.panel.log(
         `批量区「${batchTitle}」无可处理子项，继续扫描下一项`,
         "warning",
@@ -4862,24 +4886,10 @@
     if (matchURL.includes("yuketang.cn/v2/web")) {
       // v2 路线必须在课程列表页运行，避免在单个课件/视频页误启动主循环
       if (!document.querySelector(".logs-list")) {
-        const pendingAutoStart = Store.getPendingAutoStart();
-        const contentRoute =
-          AiWorkspace.getRoute() || AiWorkspace.getGenericV2ContentRoute();
-        if (
-          pendingAutoStart?.returnUrl &&
-          Utils.isV2ContentPage() &&
-          contentRoute &&
-          // 课堂对不上就不要在本内容页自启动：getReturnUrl() 也会因课堂不符返回空
-          (!classroomId ||
-            !pendingAutoStart.classroomId ||
-            pendingAutoStart.classroomId === classroomId)
-        ) {
-          panel.log(
-            `检测到 V2 内容页，接管处理：${contentRoute.source}/${contentRoute.type}`,
-          );
-          runRoute(new AiWorkspaceRunner(panel));
-          return;
-        }
+        // 这里原本还有一段「检测到 V2 内容页，接管处理」的分支，但它在 `start()` 里不可达：
+        // 上面的 aiRoute 已经走完 `AiWorkspace.getRoute()` 并 return，getRoute() 内部又兜底调用了
+        // getGenericV2ContentRoute()，两次调用之间没有任何 await/DOM 变更，所以 contentRoute 恒为 null。
+        // 真正的 V2 内容页入口是上面那个 aiRoute 分支，删除以免误导。
         panel.resetStartButton("开始");
         panel.log(
           "当前页面不是课程列表（缺少 .logs-list），请返回课程目录页后再开始",

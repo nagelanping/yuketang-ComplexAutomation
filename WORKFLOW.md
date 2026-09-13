@@ -549,6 +549,21 @@ git diff --check
 另有一处**有意保留**并写进 `AGENTS.md`：闸门放开后，交棒窗口内手动再按「开始」不会被挡（会重派发同一条目）。这是为保住手动恢复能力付的价，要堵它需要「在等新标签」状态 + 超时，属实机验证后再定。
 
 `tmp/failgate-selftest.cjs` 扩到六项：新增「拒答提示跨页面重建仍去重、重复标记不重复入表、`clear()` 一并清掉」。
+
+### 第三轮复查与回修（2026-09-13，子代理复看 `d762905`）
+
+复查确认核心方向（拒答不计 `skippedInPlace`、去重落 sessionStorage）成立，又找出四处：
+
+1. **`start()` 里我加的课堂判据是死代码（高）**：`start()` 开头已经 `const aiRoute = AiWorkspace.getRoute(); if (aiRoute) {…return;}`，而 `AiWorkspace.getRoute()` 内部就兜底调用了 `getGenericV2ContentRoute()`；两次调用之间没有 await/DOM 变更，所以后面 v2 分支里的 `contentRoute` 恒为 null——整段「检测到 V2 内容页，接管处理」都不可达。已整段删除并留注释说明真正的入口是上面的 `aiRoute` 分支。
+2. **批次内拒答不进 `refusedSeen`（高）**：`handleBatch` 的拒答子项只打 warning + `continue`，父批次仍被 `skip(-1)`；当它是最后一项时收尾会打「课程已全部完成」，与同一轮刚打的「AI 拒绝作答」自相矛盾。现在 `handleBatch` 统计 `refusedSubs`，收尾时把父批次 key 用新增的 `FailGate.markRefusedLocal()` 标成 `-2`（目录自己那份表，不走 opener），顶层重扫即计入 `refusedSeen`。
+3. **`warnedRefused` 未包 try（中低）**：sessionStorage 不可用时异常会冒泡、整轮目录扫描停摆；现在读、写各自包 try（最坏只是提示重复）。
+4. **自测没覆盖真实 key 名（低）**：桩里写死了 `failCounts`，`refusedWarned` 缺失导致实际读写字面量 `"undefined"`。现在从源码里正则取真实 key 名，并补 `markRefusedLocal` 与 `clear()` 清对 key 的断言。
+
+### 第三轮未修（结论）
+
+- **`boot()` 判据在「本页取不到课堂 id」时失效**（`/v2/web/xcloud/...` 的 id 只在路径里，`getCurrentClassroomId()` 不覆盖，而 `getRoute()` 的 xcloud 分支只读 query）：此时 `sameClassroom` 为真、`getReturnUrl()` 的校验也被跳过，理论上仍可能导航去别的课堂的目录。**不按猜测补正则**——`{id}` 是否等于 classroom id 没有实机样本，猜错会把合法续跑挡掉（比现在的风险更大）。留待实机取一条 xcloud URL 样本，见 `OBSERVE.md` 待验证清单。
+- **`markProgress` 不清「已提示」标记**：同一 key 先拒答（提示过）→ 后来进展 → 再拒答时不再提示。属可接受语义（提示过一次即知情），且子标签不该代写目录的提示表。
+- **交棒窗口内手动再按「开始」会重派发**：与第二轮同一取舍，已写进 `AGENTS.md`。
 ## 完成维护
 
 完成任务后维护该文档，在已完成的对应条目下进行简要说明。
