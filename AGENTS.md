@@ -2,20 +2,21 @@
 
 本文件为编码代理提供本仓库的项目专属规则。
 
-项目根目录还有其他 .md 文档，开始工作前先读一遍：
+先按需阅读以下 `.md` 文档了解具体情况：
 
-- `SystemPrompt.md`：AI 答题 prompt 的源文本。它要硬编码进脚本（单文件交付），改完必须与 `Solver.buildPrompt()` 逐字对齐。
-- `OBSERVE.md`：雨课堂**实机行为记录**（按路由分节）＋文末「脚本缺陷存档」。涉及网页行为的判断以它为准，新观测回填这里。该文件被 `.gitignore` 忽略，属本地工作笔记。
-- `FIREFOX.md`：人机协同的 Firefox 实机检测方法（`ykt-ff` CLI 用法与注意）。同样被忽略。
-- `AUDIT.md`：阶段性审查报告与修改建议，文末有「待实机验证」清单；动相关代码前先看它。
-- `ref/`：参考脚本，只作审计/对比。
+- `OBSERVE.md`：雨课堂**实机行为记录**（按路由分节）。涉及网页行为的判断以它为准，新观测回填这里。该文件被 `.gitignore` 忽略，属本地工作笔记。
+- `FIREFOX.md`：人机协同的 Firefox 实机检测方法（`ykt-ff` CLI 用法与注意）。
+- `AUDIT.md`：阶段性审查报告与修改建议。
+- `WORKFLOW.md`：按照 `AUDIT.md` 进行代码修改的流程。需要根据进展进行维护。
+- `LOG.md` ：简要记录每次任务，包含目标、结果、关键字段/行为发现记录。
+- `AGENTS.md`：本文件。任务完成后按需维护对应区域。
 
 ## 项目
 
 雨课堂复合自动化 userscript，单文件交付：
 
 - 主源码：`yuketang-ComplexAutomation.user.js`
-- AI 答题的 prompt 源：`SystemPrompt.md`
+- AI 答题的 prompt 源（无需查看）：`SystemPrompt.md`
 - 仅作参考的代码：`ref/`
 
 userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start` 运行。
@@ -29,7 +30,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - JS 编辑后做语法检查：
   `node --check yuketang-ComplexAutomation.user.js`
 - 运行时验证靠手动：
-  在 Tampermonkey 或兼容管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
+  在脚本管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
 - 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。用 `ykt-ff-start` 启动，用 `ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
   多标签时 `ykt-ff` 只作用于活动标签，先 `ykt-ff tabs` 看清、再 `ykt-ff tab <idx>` 切换；句柄顺序在不同会话间不稳定，`tab <idx>` 可能落到 `(privileged)` 窗口并报 `ExecuteScript ... not supported for privileged browsing contexts`。细节见 `FIREFOX.md`。
 
@@ -39,40 +40,39 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 唯一对外发布的版本来源是 userscript 头部：
 
-- 搜索关键词：`@version`
+- 关键词：`@version`
 - `Config.version` 读取 `GM_info.script.version`
 - 不得在其他地方硬编码第二个版本
 - `ref/` 内的版本与此无关
 
 ## 代码导航
 
-用搜索关键词而非固定行号。这个单一大文件里行号会漂移。
-本地优先用 `rg -n`；文档中写命令时 `grep -n` 也可以。
+用搜索关键词而非固定行号。
 
 常用锚点：
 
 - 头部/版本/连接：
-  `rg -n "@version|@connect|@require" yuketang-ComplexAutomation.user.js`
+  `@version|@connect|@require`
 - 启动链：
-  `rg -n "function boot|function start|function createPanel" yuketang-ComplexAutomation.user.js`
+  `function boot|function start|function createPanel`
 - 核心单例：
-  `rg -n "const Config|const Utils|const Store|const FailGate|const PauseGate|const Player|const AiWorkspace|const Solver|const Decipherer" yuketang-ComplexAutomation.user.js`
+  `const Config|const Utils|const Store|const FailGate|const PauseGate|const Player|const AiWorkspace|const Solver|const Decipherer`
 - 路由 runner：
-  `rg -n "class V2Runner|class ProOldRunner|class ProNewRunner|class AiWorkspaceRunner" yuketang-ComplexAutomation.user.js`
+  `class V2Runner|class ProOldRunner|class ProNewRunner|class AiWorkspaceRunner`
 - ai-workspace 叶子遍历：
-  `rg -n "autoSelect|handleNext|getAllScourse|_lastAdvanceIndex|nav-item-leaf-box" yuketang-ComplexAutomation.user.js`
+  `autoSelect|handleNext|getAllScourse|_lastAdvanceIndex|nav-item-leaf-box`
 - V2 遍历与返回行为：
-  `rg -n "async run\\(\\)|returnToList|openContentEntry|HANDOFF|handleBatch|handleClassroom|handleCourseware" yuketang-ComplexAutomation.user.js`
+  `async run\\(\\)|returnToList|openContentEntry|HANDOFF|handleBatch|handleClassroom|handleCourseware`
 - 完成状态逻辑：
-  `rg -n "getCompletionState|isProgressDone|statistics-box \\.aside" yuketang-ComplexAutomation.user.js`
+  `getCompletionState|isProgressDone|statistics-box \\.aside`
 - FailGate 用法：
-  `rg -n "FailGate\\.|ykt_fail_counts|clearPendingAutoStart" yuketang-ComplexAutomation.user.js`
+  `FailGate\\.|ykt_fail_counts|clearPendingAutoStart`
 - AI 答题管线：
-  `rg -n "captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt" yuketang-ComplexAutomation.user.js`
+  `captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt`
 - 题目文档与 iframe 跨越：
-  `rg -n "getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId" yuketang-ComplexAutomation.user.js`
+  `getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId`
 - Pro 旧版游标与路由：
-  `rg -n "getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount" yuketang-ComplexAutomation.user.js`
+  `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 

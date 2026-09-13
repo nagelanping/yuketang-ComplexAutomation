@@ -1,8 +1,8 @@
-# 项目审查报告（2026-09）
+# 项目审查报告（2026-09-13）
 
-范围：`yuketang-ComplexAutomation.user.js`（v1.3.2，单文件，约 5190 行，其中 410KB 的 `MAP_DATA` 与 700 行面板模板占大头）、`SystemPrompt.md`、`README.md`、`AGENTS.md`。`ref/` 只作参考，未提出修改。
+范围：`yuketang-ComplexAutomation.user.js`（v1.3.2，单文件约 5190 行，其中 410KB 的 `MAP_DATA` 与 700 行面板模板占大头）、`SystemPrompt.md`、`README.md`、`AGENTS.md`、`OBSERVE.md`。`ref/` 只作参考，未提出修改。
 
-方法：全文件通读 + 符号引用计数（`rg`）+ 与 `OBSERVE.md` 已记录的实机结论对照。`node --check yuketang-ComplexAutomation.user.js` 通过。本次只新增本文档，没有改动脚本，语法检查并非必要。
+方法：全文件通读 + 符号引用计数（`rg`）+ `ykt-ff`（marionette）实机核查，并与 `OBSERVE.md` 的实机记录对照。`node --check yuketang-ComplexAutomation.user.js` 通过。文中的页面结论都注明了核对方式；没核对的项标「待验证」。
 
 ## 分类口径
 
@@ -74,12 +74,12 @@
 
 单文件交付决定了 prompt 必须硬编码进脚本，但 `SystemPrompt.md` 被定位为源文本，两者现在各缺一块：
 
-| 位置 | `SystemPrompt.md` | `Solver.buildPrompt()` |
-| --- | --- | --- |
-| 背景段的 refuse 说明 | 有（「必须如实返回 refuse」） | **缺** |
-| JSON Schema | 含 `refuse`，并注明「type = refuse 时不输出 answers」 | **缺**（只列四种题型） |
-| refuse 示例 | 示例 4、示例 5 | **缺** |
-| 推理字段说明 | 无 | 多一句「模型支持 reasoning / thinking 时可在该字段内推理」 |
+| 位置                 | `SystemPrompt.md`                                    | `Solver.buildPrompt()`                                   |
+| -------------------- | ------------------------------------------------------ | ---------------------------------------------------------- |
+| 背景段的 refuse 说明 | 有（「必须如实返回 refuse」）                          | **缺**                                               |
+| JSON Schema          | 含`refuse`，并注明「type = refuse 时不输出 answers」 | **缺**（只列四种题型）                               |
+| refuse 示例          | 示例 4、示例 5                                         | **缺**                                               |
+| 推理字段说明         | 无                                                     | 多一句「模型支持 reasoning / thinking 时可在该字段内推理」 |
 
 后果：`parseAIAnswer` 与 `autoSelectAndSubmit` 的 refuse 分支（跳过、不选不提交、10 秒后继续）依赖模型自发输出 `{"type":"refuse"}`，而当前下发的 prompt 完全没告诉模型可以这样返回。这是行为与文档脱节，不只是文案问题。
 
@@ -93,9 +93,9 @@
 
 `README.md` 是给使用者看的操作依据，这几条会直接误导操作。建议与第 3、4 条一并修。
 
-### 8. `shrink:` `AGENTS.md` 需要跟随本次清理更新
+### 8. `shrink:` AGENTS.md 里关于死代码的说明与代码强耦合
 
-删除死代码后，AGENTS.md 以下内容会失真：V2 执行模型里对 `handleVideo`/`playVideoItem` 的描述、ai-workspace 锚点列表、常见坑中 `handleCourseware` 与「自动评论开关已失效」两条（后者随 `autoCommentItem` 删除后描述对象消失，但讨论区子项跳过逻辑仍在 `handleBatch`，需要重新表述）。请在同一次改动里更新。
+`AGENTS.md` 的「V2 执行模型」逐名列出了 `handleVideo`、`playVideoItem` 等交棒前的遗留方法，并写明「全仓库没有任何调用点，不要照抄」。这段说明与第 1 条的死代码同生共死：删除死代码时必须在同一次改动里把这段、以及「ai-workspace 叶子遍历」锚点里对已删符号的引用一并改掉，否则文档会指向不存在的符号。
 
 ---
 
@@ -174,10 +174,13 @@
 
 `Store.getProClassCount()/setProClassCount()` 把「刷到第几集」写进 localStorage（`pro_lms_classCount`），而 `AGENTS.md` 对 V2 明确要求「不要加入持久化索引游标」，理由是目录刷新后索引会失效、漏掉中间未完成项。Pro 这条链路用的是相反的模型，属于尚未重构的历史分支。
 
-**先用 `ykt-ff` 确认 `/pro/lms/*` 现在是否还能进入**（`OBSERVE.md` 已记录 V2 目录条目点进去落的是 ai-workspace 路由，说明站点在往 ai-workspace 迁移）：
+可达性现状（2026-09-13 实机）：V2 目录页主文档里挂着一个隐藏（宽高 0）的 `iframe.tab-pane-content-iframe`，`src` 指向 `/pro/lms/{token}/{classroom_id}/studycontent?...`——站点**仍在引用** `/pro/lms/*`；但没有观测到用户级入口（V2 目录条目点进去落的是 ai-workspace 路由），所以不能据此断定 `start()` 的 pro/lms 分支已不可达。
 
-- 若仍可达 → 保留，但在代码注释与 AGENTS.md 中写清「Pro 旧版为游标模型，与 V2 的 DOM 进度模型有意不同」，并补齐第 15 条的 cleanup；
-- 若已不可达 → `ProOldRunner` + `ProNewRunner` 整簇删除，`start()` 的 pro/lms 分支、`Store` 的 `proClassCount` 三个方法与 storage key 一并清理。
+处理方式：
+
+- 在拿到「该路由已无用户入口」的实机证据之前，保留 `ProOldRunner` / `ProNewRunner`，并补上第 15 条的 cleanup；
+- 若确认无入口，再整簇删除：两个 Runner、`start()` 的 pro/lms 分支、`Store` 的 `proClassCount` 三个方法与 storage key 一并清理；
+- 无论去留，都应在代码注释与 `AGENTS.md` 里写清「Pro 旧版是游标模型，与 V2 的 DOM 进度模型有意不同」，避免后来者当成漏改。
 
 ---
 
@@ -210,8 +213,8 @@
 2. **清死配置**：`aiMaxOutputTokens`、`forceSamplingParams`、`Decipherer` 两个常真开关（第 2–4 条），顺带修 README 对应段落（第 7 条）。
 3. **同步 prompt**：`SystemPrompt.md` ↔ `Solver.buildPrompt()`（第 6 条），并在一个真实题目上验证 refuse 分支。
 4. **修共用基础设施**：`Utils.poll()` 异常收敛、`autoSelectAndSubmit()` 返回值显式化（第 9–10 条）。第 10 条改前需先观察作业提交回写。
-5. **实机验证后再动**：课件（第 13 条）、课堂（第 14 条）、Pro 路由存废（第 15、17 条）、完成度阈值（第 16 条）。这四项都先只记录结论，不预改代码。
-6. **最后**：更新 `AGENTS.md`（第 8 条）与完成度/路由相关的锚点列表。
+5. **实机验证后再动**：课件（第 13 条）、课堂（第 14 条）、Pro 路由存废（第 15、17 条）、完成度阈值（第 16 条）。这四项只记录结论、不预改代码；清单与 `OBSERVE.md` 文末的「仍待实机验证」保持同一份。
+6. **最后**：删死代码时同步删掉 `AGENTS.md` 里那段死代码说明（第 8 条），并核对「代码导航」里的锚点仍能命中。
 
 ## 附：本次审查使用的核查命令
 
@@ -221,6 +224,10 @@ rg -n "handleVideo|playCurrentVideoUntilProgressDone|playAudioItem|playVideoItem
 rg -n "aiMaxOutputTokens|forceSamplingParams|deobfEnabled|fontDisabled|gdufemooc" yuketang-ComplexAutomation.user.js
 rg -n "buildPrompt|^function boot|Decipherer.start" yuketang-ComplexAutomation.user.js
 node --check yuketang-ComplexAutomation.user.js
+
+# 实机核查（marionette）。注意 ykt-ff 每次调用都是新会话，
+# 「切标签 + 执行」必须在同一次连接内完成，做法与陷阱见 FIREFOX.md
+ykt-ff tabs
 ```
 
 ---
