@@ -3322,6 +3322,12 @@
           FailGate.skip(subKey);
           return true;
         }
+        // 讨论区子项：关闭自动评论时就地跳过，不交棒进论坛页（否则开标签→"暂不自动处理"→关标签→再开，满 3 轮才跳过）。
+        if ((tagHref.includes("taolun") || tagHref.includes("forum")) && !Store.getFeatureConf().autoComment) {
+          this.panel.log("已关闭自动评论，跳过该讨论区子项", "warning");
+          FailGate.skip(subKey);
+          return true;
+        }
 
         // 内容子项：点击后站点新开标签处理该知识点。目录只点击一次并计子项次数（FailGate 兜底防死循环），
         // 交棒后不在本目录文档找媒体，也不重载目录；新标签处理完经 returnToSource 重载目录后继续扫下一子项。
