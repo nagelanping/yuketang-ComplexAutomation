@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.0.5
+// @version      2.0.6
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -2372,11 +2372,40 @@
       }
       return root;
     },
-    // 题面指纹：判断「当前显示的还是不是同一道题」。站点提交成功会自己翻到下一题（实测），
-    // 所以「题面变了」既能当提交被接受的证据，也是不要再点「下一题」的理由。
+    // 题面文本（当前显示的那道题），用于「还是不是同一道题」的判断。
     exerciseFingerprint(root = this.getExerciseContainer()) {
       const questionRoot = this.getExerciseQuestionBody(root);
       return this.normalizeText(questionRoot?.innerText || "").slice(0, 120);
+    },
+    // 「刚才那道题还留在页面上吗」——区分站点两种提交后行为（2026-09-13 实机）：
+    // 答对 → 自己翻到下一题（题面文本整体换掉）；答错 → 留在原页只把结果渲染上去（题面原文还在，后面多了答案/解析）。
+    // 取提交前题面的前 40 字做包含判断：结果通常渲染在题干之后，前 40 字基本不受影响。
+    exerciseQuestionStillShown(previousText) {
+      const prefix = this.normalizeText(previousText).slice(0, 40);
+      if (!prefix) return false;
+      return this.exerciseFingerprint().includes(prefix);
+    },
+    // 「这一页还是一道待作答的题吗」。末题提交后站点会翻到作业概况/结果页（实测），那里没有逐题作答的
+    // 提交按钮；把它当题目截图问 AI 只会白问一次、再报一道做不出的题。
+    // 只看题面自身与它的父级（逐题提交按钮就在这一层），不扫整页——整页里可能有「提交作业」这种交整份作业的按钮，
+    // 而它的文本带「作业」，用文本排除掉，别把它当成某道题的作答提交。
+    hasExerciseSubmitControl(itemBodyElement) {
+      if (!itemBodyElement) return false;
+      const roots = [itemBodyElement, itemBodyElement.parentElement].filter(Boolean);
+      for (const root of roots) {
+        for (const btn of root.querySelectorAll(
+          'button, .el-button, [role="button"]',
+        )) {
+          const text = btn.innerText || "";
+          if (
+            btn.offsetParent !== null &&
+            /提交|保存|确认|确定/.test(text) &&
+            !/作业|交卷/.test(text)
+          )
+            return true;
+        }
+      }
+      return false;
     },
     isExerciseAnswered(root = this.getExerciseContainer()) {
       if (!root) return false;
@@ -4668,8 +4697,12 @@
               true,
             )
           ) {
-            // 站点自己翻了页、回写判据看不到：说清楚是靠翻页推断的，便于以后排查
-            this.panel.log(`${label || "当前题目"} 已提交（站点已自动翻到下一题）`);
+            // 回写判据看不到，靠题面变化推断的：说清是哪一种，便于以后排查
+            this.panel.log(
+              AiWorkspace.exerciseQuestionStillShown(beforeFingerprint)
+                ? `${label || "当前题目"} 已提交（结果留在此页，稍后自行点下一题）`
+                : `${label || "当前题目"} 已提交（站点已自动翻到下一题）`,
+            );
           }
           await Utils.sleep(1200);
           return true;
@@ -4700,13 +4733,12 @@
 
     async advanceExerciseQuestion(root, previousFingerprint = "") {
       const currentRoot = AiWorkspace.getExerciseContainer() || root;
-      // 站点提交成功会自己翻到下一题（实测）。此时题面已经变了，再点「下一题」会多跳一题、
-      // 把新翻到的那题整题漏答——所以先看题面有没有变，变了就直接算已推进，不点按钮。
-      const fingerprintNow = AiWorkspace.exerciseFingerprint(currentRoot);
+      // 站点提交后有两种行为（实测）：答对自己翻到下一题；答错留在原页渲染结果。
+      // 分界是「刚才那道题还留在页面上吗」——还留着就是没翻页，得自己点「下一题」；
+      // 已经换掉就是站点翻过了，这时再点「下一题」会多跳一题、把那题整题漏答。
       if (
         previousFingerprint &&
-        fingerprintNow &&
-        fingerprintNow !== previousFingerprint
+        !AiWorkspace.exerciseQuestionStillShown(previousFingerprint)
       )
         return true;
       const nextBtn = AiWorkspace.getExerciseActionButton(
@@ -4715,13 +4747,13 @@
       );
       if (!nextBtn) return false;
       nextBtn.click();
+      // 点完「下一题」要等的是「刚才那道题从页面上消失」，而不是「题面文本变了」：
+      // 答错的页面本来就带着结果文本，拿文本比较会立刻为真、等于没等。
       return Utils.poll(
-        () => {
-          const fingerprint = AiWorkspace.exerciseFingerprint(
-            AiWorkspace.getExerciseContainer() || currentRoot,
-          );
-          return fingerprint && fingerprint !== previousFingerprint;
-        },
+        () =>
+          previousFingerprint
+            ? !AiWorkspace.exerciseQuestionStillShown(previousFingerprint)
+            : Boolean(AiWorkspace.exerciseFingerprint(currentRoot)),
         { interval: 500, timeout: 5000 },
       );
     }
@@ -4803,6 +4835,13 @@
         ).slice(0, 120);
         if (!fingerprint) break;
         if (i > 0 && fingerprint === previousFingerprint) break;
+        // 末题提交后站点翻到的是作业概况/结果页，不是题目页：翻页后先确认这一页还有没有逐题提交控件，
+        // 没有就停手（不要再对着它截图问 AI，也不要把它记成一道做不出「未推进」的题）。
+        // 首题不设这个门槛：真实题目在选中答案前，提交按钮通常只是 disabled，不是不存在。
+        if (i > 0 && !AiWorkspace.hasExerciseSubmitControl(questionRoot)) {
+          this.panel.log("当前页面没有逐题提交控件，按作业已到最后处理");
+          break;
+        }
         if (this.isExerciseQuestionSubmitted(currentRoot, null, i, true)) {
           this.panel.log(
             `${this.getExerciseQuestionLabel(currentRoot) || `第 ${i + 1} 题`} 已提交，跳过`,

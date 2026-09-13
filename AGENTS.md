@@ -68,13 +68,13 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - FailGate 用法：
   `FailGate\\.|ykt_fail_counts|clearPendingAutoStart`
 - AI 答题管线：
-  `captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt|exerciseFingerprint|advanceExerciseQuestion`
+  `captureQuestionImage|askAI|autoSelectAndSubmit|detectQuestionType|getOptionElements|buildPrompt|exerciseFingerprint|exerciseQuestionStillShown|advanceExerciseQuestion|hasExerciseSubmitControl`
 - 题目文档与 iframe 跨越：
   `getExerciseDocument|getExerciseQuestionTabs|getExerciseQuestionBody|iframeExerciseId`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
-  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
+  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -287,6 +287,10 @@ API 行为：
 `solveExerciseQuestion(root, label, tab, index)` 的后两个参数就是给这次复核用的，由 `handleExercise` 的题号列表循环传入；无题号列表的路径没有 tab，只能退回纯 DOM 的 `isExerciseAnswered()`。`handleExercise` 会汇总每题结果：有一题没确认成功就返回 `false`（只是日志与返回值更诚实，流程不变——仍 `returnToSource` 重载目录，由目录重扫 + FailGate 兜底）。
 
 **正因为站点提交后会自己翻页**，无题号列表路径的 `advanceExerciseQuestion(root, previousFingerprint)` 必须先看题面指纹有没有变：变了就直接算已推进、**不再点「下一题」**（否则一次提交推进两题，新翻到的那题整题漏答——2026-09-13 实机 bug）。
+
+提交后站点的行为分两种（2026-09-13 实机）：**答对自动翻到下一题；答错留在原页、只把结果渲染上去**（提交按钮随即不可用）。判据是 `AiWorkspace.exerciseQuestionStillShown(previousText)`——拿提交前题面的前 40 字在当前题面里做包含判断：还包含就是没翻页（该自己点「下一题」），已经换掉就是站点翻过了（再点会漏答一题）。**不要用「题面文本变了」当已翻页的判据**：答错时同一页渲染结果也会让文本变化。同理，`advanceExerciseQuestion` 点完「下一题」要等的是「刚才那道题从页面上消失」，不是「文本变了」。
+
+末题提交后站点翻到的是**作业概况/结果页**（没有逐题提交按钮）。无题号列表路径每轮翻页后会先用 `AiWorkspace.hasExerciseSubmitControl()` 确认这一页还是不是一道待作答的题：不是就停手（`break`），不截图、不问 AI、也不把它记成一道「未推进」的题。该判据只看题面自身与它的父级、并要求按钮文本不含「作业/交卷」——整页可能有个「提交作业」按钮，那是交整份作业的，不是某道题的作答提交；首题（`i === 0`）不设这个门槛，因为真实题目在选中答案前，提交按钮通常只是 disabled、不是不存在。
 
 `solveExerciseQuestion` 的 refuse 分支还会调用 `FailGate.markRefused(...)`，把来源目录里本次交棒条目的 key 标成 `-2`：这一题既然脚本答不了，那份作业就不可能靠脚本刷完，目录重扫时应当直接跳过，而不是再交棒重试到 FailGate 满 3 次。key 由目录在交棒前写入 `sessionStorage`（`ykt_handoff_key`），子标签继承的是拷贝，因此回写目标是 `window.opener.sessionStorage`；拿不到 opener（用户直接在本页启动、窗口已关）时静默退回原来的重试行为。
 
