@@ -278,3 +278,39 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - 顺带修 `returnToSource()` 的日志文案（原写「媒体播放完成」，这条路径现在也服务作业与讨论区）。
 - `tmp/forum-selftest.cjs` 重写为 8 组断言，新增「拿错对象（`true`）必须返回 false 并打日志」这条回归用例。
 - 复现/清理记录：调试时往 84703581 的回复框写过「测试文本 123」，事后已清空，没有发送。
+
+## 2026-09-14 修章节重载死循环：`FailGate.reset()` 抹掉了父批次的拒答哨兵（机主实机报告，@version 2.1.5）
+
+机主报告：章节里有被跳过的作业/讨论时，脚本反复「进入章节 → 发现除跳过项外都完成 → 刷新 → 章节仍是进行中 → 再进入」，死循环。
+
+实机取证（`ykt-ff` 接管机主正常 profile，课堂 31317597）：
+
+- 目录顶层 2 张卡：公告「已读」+ 批次卡「第一章 美好人生 等」（137 个学习单元，默认**不展开**、状态「进行中」）。展开后统计：视频 95 已完成 / 讨论 23 已发言 / 作业 16 已完成 / 图文 3 已读，唯一未完成的是 leaf 84703939「第十五章 积极身心--homework」，目录文案 `5/6 进行中`。
+- 该作业跑在 `#iframeExerciseId`（`/v2/web/iframe-exercise/31317597/84703939`）。题号页签 6 个，页签 class 里 `primary` = 已作答；第 1 题（要求真实完成运动的“勾选已做”）无状态图标，提交栏是「提交」= 未作答。机主补充：该题 AI 返回 `refuse`（要求实际活动，模型拒答）。
+- `exerciseList.problems`（`container.__vue__.exerciseList`）是 6 个条目、与页签同序；`user.submit_time / is_right / answer` 都在 `user` 里。题 2–6 的 `submit_time` 完全相同（`2026-09-14 08:38`，一次批量提交），第 1 题是机主 11:51 手答的；08:38 那次推测是脚本自己答的（子标签 `handleExercise` 一次遍历答完 6 题）。
+- 根因（代码路径 + 终点状态互证）：子标签拒答 → `FailGate.markRefused(subKey)` 写 `-2` 到 opener(目录)；下一轮批次收尾 `FailGate.markRefusedLocal(parentFailKey)` 把**父批次**也标成 `-2` 并 `return true`；`run()` 紧接着 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` —— `skipped` 只认 `-1`，于是 `reset` 把 `-2` **删掉** → 下一轮重扫又进同一章节（它永远停在「进行中」）→ 再标一次、再删一次：整页重载死循环。机主手动补完那道题后章节变「已完成」，循环随之消失，与推断一致。
+- 修：`FailGate.reset()` 遇到哨兵（`< 0`）直接返回，与 `bump` 同一规矩；普通计数照旧清零。这不是「顺手」，哨兵是扫描判据，不能被「有进展就清零」抹掉。
+- 验证：`tmp/failgate-selftest.cjs` 增 3 组断言（`-2` / `-1` 保留、普通计数仍清零），把该守卫删掉后自测立刻报 `reset 不得抹掉拒答哨兵`（已验证 pre-fix 失败 / post-fix 通过）；`node --check` 与其余八个自测照旧通过。
+- **未实机复现修复后的行为**：该课堂已 100%（批次卡「已完成」、137 项全绿），不再存在「进行中且只剩拒答子项」的章节，无法在实机上跑出这条分支；修复靠代码路径 + 自测守住，实机复核留待下次遇到同类章节。
+
+## 2026-09-14 顺带修两处自测脚本失修（脚本后随仓库结构整理移入 `scripts/`，入库）
+
+- `prompt-sync-check.cjs`：读的文件名漏了扩展名（`SysPmt_Discussion` → 实际是 `SysPmt_Discussion.md`，上一提交 `chore(SysPmt_Discussion): rename` 漏改），于是作业那份通过、讨论区那份 ENOENT —— 讨论区 prompt 的同步守卫其实一直没在跑。改成 `.md`，并把三处路径统一成 `__dirname + "/../"`（原先用 cwd 相对名，只有「在仓库根目录跑」才对；现在仓库根、脚本所在目录、绝对路径三种跑法结果相同）。
+- `decipherer-selftest.cjs`：按旧的单行写法抓 `MAP_DATA`（`const MAP_DATA = "..."`），而现在脚本里是 `const MAP_DATA =` 换行 + 缩进字面量，正则不匹配就报 `Cannot read properties of null`。正则改成 `const MAP_DATA =\s*"([A-Za-z0-9+/=]+)"`，并补一条带说明的 `assert`（声明形式再变时报清楚的话，而不是 TypeError）。
+- 验证：三个跑法（仓库根、脚本所在目录、绝对路径）下两份都过 —— `OK: 93 行 prompt 与 SysPmt_Homework.md 逐行一致` / `OK: 62 行 prompt 与 SysPmt_Discussion.md 逐行一致` / `decodeMap: 30038 条 OK` + `SELFTEST PASS`。
+- 文档同步：`AGENTS.md`（文件清单、`Solver` 章节）、`WORKFLOW.md`（prompt 源规则）里的 `SysPmt_Discussion` → `SysPmt_Discussion.md`；`LOG.md` 的历史条目按原样保留（那是当时的记录）。
+
+## 2026-09-14 仓库结构整理：检查脚本移出 `tmp/`，`tmp/` 按用途分目录（机主指示）
+
+机主定的约定：根分区 `/tmp` 是 tmpfs（断电即失），只放一次性中间产物；仓库 `./tmp/` 是普通文件，放值得留档的诊断产物与抓取；脚本不该躺在 `tmp/` 里，移到 `scripts/` 并入库。
+
+改动：
+
+- `scripts/`（新建，入库）：10 个 `*-selftest.cjs` + `prompt-sync-check.cjs` + `ykt-inspect/`（原先在仓库根、且被 `.gitignore` 忽略）。这些脚本本来就按 `__dirname` 找主源码，换目录后无需改路径；`ykt-inspect` 自带 `launch.sh`/`bi.mjs`，内部不依赖仓库相对路径。
+- `tmp/`（仍 gitignore）按来源分了 7 个子目录：`ai-captures/`（10 份 AI 请求抓取 + `llama-swap_run_capture.cjs`）、`dom-samples/`（原 `samples/`）、`site-bundles/`（原 `yktjs/`，75 个站点 chunk）、`font/`（字体与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、`opentype.min.js`、`html2canvas.js`、`font-*.cjs`、截图与 `h2c-out*.txt`）、`probes/`（原 `probes/` + 28 个 `diag*.js` + `verify.js`）、`firefox-marionette/`（原 `ffj/`，从 omni.ja 摘出的 marionette 协议源码）、`attic/`（两份旧提交草稿）。空目录 `ffj/` 的其余部分清理掉。
+- `tmp/font/font-*.cjs` 的素材路径改成 `__dirname` 相对（原先读 `./MAP_DATA.txt`、`./exam_font.ttf`，只有在该目录下跑才对）。顺带修 `font-unicode.cjs` 的一处旧 bug：`charToGlyphIndex` 要的是字符，传码点数字会在 `codePointAt` 上抛 TypeError → 改 `String.fromCodePoint(cp)`，输出与 `OBSERVE.md` 记录的 882 个基本区码点一致。
+- `.gitignore` 去掉 `ykt-inspect/` 条目；`README.md` 的「文件」补 `scripts/`、`tmp/` 两条；`AGENTS.md` 新增「仓库结构」章节并写明 `/tmp` 与 `./tmp/` 的分工，`node tmp/*.cjs` 全部改 `node scripts/*.cjs`（必查项另补一条自测/prompt 同步要求）；`WORKFLOW.md`、`OBSERVE.md` 内引用同步。
+- 删掉 `AUDIT.md`「仓库卫生」点名的那类冗余副本里的两份：`tmp/font/MAP_DATA.js`（脚本读的是 `MAP_DATA.txt`，这份只是 JS 包裹的重复数据）与 `tmp/font/html2canvas.js`（截图库的本地副本，没有任何脚本引用）。**`opentype.min.js` 保留**——`font-match.cjs` / `font-unicode.cjs` 用 `require('./opentype.min.js')`，删了这两个诊断就跑不起来；它不是重复副本，是这两支脚本的依赖。
+- 未动 `AUDIT.md`（阶段性报告，其「仓库卫生」建议现在落实：自测已移出、`tmp/` 已分类、冗余副本按上面两条处理）。`LOG.md` 早前条目里的 `tmp/*.cjs` 按当时状态保留。
+
+验证：11 个检查脚本在仓库根 / `scripts/` 内 / 绝对路径三种跑法全部 PASS；`tmp/font/font-unicode.cjs`、`font-match.cjs` 从 `/` 跑也正常；`node --check`、`git diff --check` 通过。

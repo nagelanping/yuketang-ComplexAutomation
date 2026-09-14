@@ -47,8 +47,8 @@ rg -n '<本工作包涉及的符号>' yuketang-ComplexAutomation.user.js
 - 不收窄 `AUDIT.md` 第四节列出的防御性逻辑，除非已有可复现反例。
 - 行为、架构、路由、选择器、存储 key、AI 流程或核心符号变化时，同步更新 `AGENTS.md`。
 - 新的网页观测同步更新 `OBSERVE.md`。用户操作方式变化时同步更新 `README.md`。
-- `SysPmt_Homework.md`（正文在 `<AI识图作业Prompt>` 标记之间）是作业答题的 prompt 源文本。修改 prompt 时，同次更新 `Solver.buildPrompt()`，两者不得漂移，改完跑 `node tmp/prompt-sync-check.cjs`。
-- `SysPmt_Discussion`（正文在 `<AI讨论区Prompt>` 标记之间）是讨论区回复的 prompt 源文本，对应 `Solver.buildForumPrompt()`；同一个 `tmp/prompt-sync-check.cjs` 一并核对两份。
+- `SysPmt_Homework.md`（正文在 `<AI识图作业Prompt>` 标记之间）是作业答题的 prompt 源文本。修改 prompt 时，同次更新 `Solver.buildPrompt()`，两者不得漂移，改完跑 `node scripts/prompt-sync-check.cjs`。
+- `SysPmt_Discussion.md`（正文在 `<AI讨论区Prompt>` 标记之间）是讨论区回复的 prompt 源文本，对应 `Solver.buildForumPrompt()`；同一个 `scripts/prompt-sync-check.cjs` 一并核对两份（该脚本按 `__dirname` 找文件，从任意 cwd 跑结果相同）。
 
 ### 4. 验证并收尾
 
@@ -221,7 +221,7 @@ README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面�
 「如果模型或服务端支持 reasoning / thinking 字段，可以在该字段内部推理；最终 content 仍必须只包含 JSON 对象。」
 （若不需要这行，删 md 后同步删代码同位置即可）。
 
-新增最小自测 `tmp/prompt-sync-check.cjs`：断言 md 正文（`<AI识图作业Prompt>` 区块内）与代码 `system` 数组逐行一致，
+新增最小自测 `scripts/prompt-sync-check.cjs`：断言 md 正文（`<AI识图作业Prompt>` 区块内）与代码 `system` 数组逐行一致，
 本次输出 `OK: 93 行 prompt 与 SysPmt_Homework.md 逐行一致`。改完 prompt 后跑一次即可拦住再次漂移。
 
 模型实测（真实 refuse 返回）在自己的 API 与题目上做；脚本侧处理 refuse 的路径未改动。
@@ -234,7 +234,7 @@ README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面�
 
 ### 最小自测
 
-至少覆盖三个结果：checker 成功返回 `true`、超时返回 `false`、checker 抛错后在有限时间内返回 `false`。可沿用 `tmp/decipherer-selftest.cjs` 的做法写一个最小 `assert` 自测，不引入测试框架。
+至少覆盖三个结果：checker 成功返回 `true`、超时返回 `false`、checker 抛错后在有限时间内返回 `false`。可沿用 `scripts/decipherer-selftest.cjs` 的做法写一个最小 `assert` 自测，不引入测试框架。
 
 再跑一次目录页基础流程，确认现有 `Utils.poll()` 调用没有因返回语义变化而中断。
 
@@ -244,10 +244,10 @@ README 同步：反混淆标为常开且截图答题依赖（第 7 条）、面�
 `[poll] checker 抛错，按未满足返回 false: <err>`，`clearInterval` 后 `resolve(false)`，之后才走原有的
 `if (done)` 与超时判定。没有改 reject，也没有在调用点补 `try/catch`。
 
-最小自测 `tmp/poll-selftest.cjs`：直接从 userscript 抽出 `poll` 方法体执行（不与实现写两遍），覆盖四项——
+最小自测 `scripts/poll-selftest.cjs`：直接从 userscript 抽出 `poll` 方法体执行（不与实现写两遍），覆盖四项——
 
 ```sh
-$ node tmp/poll-selftest.cjs
+$ node scripts/poll-selftest.cjs
 OK: poll 的 true / 超时 false / 抛错 false + 定时器清理四项均通过
 ```
 
@@ -282,7 +282,7 @@ OK: poll 的 true / 超时 false / 抛错 false + 定时器清理四项均通过
 自测过程中发现同一段代码的第二个坑：裸 `true` / `false` 也是合法 JSON，`JSON.parse` 会成功但不带 `answers`，于是走 JSON 分支返回空 `answers`（原先表现为「未提取到答案」）。同一处收口：只有解析结果是对象时才走 JSON 分支，其余落到文本回退。这样「纯 JSON 路径」对真正的答案对象保持不变，裸布尔值改由文本回退判成对/错。
 
 ```sh
-$ node tmp/parse-answer-selftest.cjs
+$ node scripts/parse-answer-selftest.cjs
 OK: 判断题回退 6 例肯定 / 8 例否定均正确，JSON 与其他题型回退未变
 ```
 
@@ -518,10 +518,10 @@ $ node --check yuketang-ComplexAutomation.user.js   # 通过
 
 ```sh
 node --check yuketang-ComplexAutomation.user.js
-node tmp/failgate-selftest.cjs   # 新增：计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默
-node tmp/parse-answer-selftest.cjs
-node tmp/poll-selftest.cjs
-node tmp/prompt-sync-check.cjs
+node scripts/failgate-selftest.cjs   # 新增：计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默
+node scripts/parse-answer-selftest.cjs
+node scripts/poll-selftest.cjs
+node scripts/prompt-sync-check.cjs
 git diff --check
 ```
 
@@ -537,7 +537,7 @@ git diff --check
 4. **`_writeToOpener` 只把取值包在 try 里**：`markProgress` 挂在 `autoSelect()` 之前，opener 正在导航时 `getItem/setItem` 抛错会逃出 `run()`、目录永久停等。现在整个读写都在同一个 try 内。
 5. **拒答标记不再降级成 `-1`**：降级会丢掉信息，导致终结日志把「有题目需人工处理」说成「课程已全部完成」。改为模块级 `refusedWarned` Set 保证只提示一次，并新增 `refusedSeen` 计入 `遍历结束：…请手动检查`。
 
-回修后 `node --check`、`tmp/failgate-selftest.cjs`、`tmp/parse-answer-selftest.cjs`、`tmp/poll-selftest.cjs`、`tmp/prompt-sync-check.cjs`、`git diff --check` 全部通过。
+回修后 `node --check`、`scripts/failgate-selftest.cjs`、`scripts/parse-answer-selftest.cjs`、`scripts/poll-selftest.cjs`、`scripts/prompt-sync-check.cjs`、`git diff --check` 全部通过。
 
 ### 第二轮复查与回修（2026-09-13，子代理复看 `e27e631`）
 
@@ -549,7 +549,7 @@ git diff --check
 
 另有一处**有意保留**并写进 `AGENTS.md`：闸门放开后，交棒窗口内手动再按「开始」不会被挡（会重派发同一条目）。这是为保住手动恢复能力付的价，要堵它需要「在等新标签」状态 + 超时，属实机验证后再定。
 
-`tmp/failgate-selftest.cjs` 扩到六项：新增「拒答提示跨页面重建仍去重、重复标记不重复入表、`clear()` 一并清掉」。
+`scripts/failgate-selftest.cjs` 扩到六项：新增「拒答提示跨页面重建仍去重、重复标记不重复入表、`clear()` 一并清掉」。
 
 ### 第三轮复查与回修（2026-09-13，子代理复看 `d762905`）
 

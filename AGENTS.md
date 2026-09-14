@@ -16,8 +16,8 @@
 雨课堂复合自动化 userscript，单文件交付：
 
 - 主源码：`yuketang-ComplexAutomation.user.js`
-- AI 作业答题的 prompt 源（无需查看）：`SysPmt_Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `tmp/prompt-sync-check.cjs` 守）
-- 讨论区回复的 prompt 源（无需查看）：`SysPmt_Discussion`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，同一个自测守）
+- AI 作业答题的 prompt 源（无需查看）：`SysPmt_Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `scripts/prompt-sync-check.cjs` 守）
+- 讨论区回复的 prompt 源（无需查看）：`SysPmt_Discussion.md`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，同一个自测守）
 - 仅作参考的代码：`ref/`
 
 userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start` 运行。
@@ -26,10 +26,21 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 不得把 `ref/` 当作项目源码修改。它只是审计/对比材料。
 
+## 仓库结构
+
+顶层三块附料，各有明确职责，别再往别处塞文件：
+
+- `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-inspect/` 是 BiDi 调试小工具（`launch.sh` 起带 `--remote-debugging-port` 的 Firefox，`bi.mjs` 驱动）。新增检查脚本一律放这里。
+- `tmp/`（**gitignore**）：本地诊断素材与一次性探针，留作以后参考。按来源分目录：`ai-captures/`（AI 请求抓取：prompt/请求体/题图）、`dom-samples/`（页面 DOM 片段）、`site-bundles/`（站点 chunk 抓取）、`font/`（字体反混淆与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、截图、`font-*.cjs`）、`probes/`（一次性 DOM/网络探针）、`firefox-marionette/`（从 omni.ja 摘出的 marionette 协议源码，`ykt-ff` 就是照它写的）、`attic/`（旧提交草稿）。诊断脚本与它用的素材放同一个子目录，路径按 `__dirname` 找，不依赖 cwd。
+- `ref/`（**入库**）：参考脚本来源，只读不改。
+
+临时文件别写进仓库：根分区的 `/tmp` 是 tmpfs（断电即失），只放一次性的中间产物（`ykt-ff evalf` 的探针文件、`ykt-ff html > /tmp/page.html` 之类的转储）；值得留档的诊断结果才写进 `tmp/` 对应子目录。
+
 ## 必查项
 
 - JS 编辑后做语法检查：
   `node --check yuketang-ComplexAutomation.user.js`
+- JS 逻辑改动后跑相关的最小自测（`node scripts/<关键词>-selftest.cjs`，见「代码导航」）；prompt 源或 `build*Prompt()` 改动后跑 `node scripts/prompt-sync-check.cjs`。
 - 运行时验证靠手动：
   在脚本管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
 - 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。用 `ykt-ff-start` 启动，用 `ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
@@ -77,7 +88,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - Pro 旧版游标与路由：
   `getProClassCount|setProClassCount|clearProClassCount|pro_lms_classCount`
 - 等待原语与本地自测：
-  `Utils.poll`、`node tmp/poll-selftest.cjs`、`node tmp/parse-answer-selftest.cjs`、`node tmp/prompt-sync-check.cjs`、`node tmp/failgate-selftest.cjs`、`node tmp/advance-selftest.cjs`、`node tmp/exercise-end-selftest.cjs`、`node tmp/exercise-answered-selftest.cjs`、`node tmp/stop-selftest.cjs`、`node tmp/forum-selftest.cjs`、`node tmp/completion-state-selftest.cjs`（`tmp/` 被 gitignore，只是本地脚本）
+  `Utils.poll`、`node scripts/poll-selftest.cjs`、`node scripts/parse-answer-selftest.cjs`、`node scripts/prompt-sync-check.cjs`、`node scripts/failgate-selftest.cjs`、`node scripts/advance-selftest.cjs`、`node scripts/exercise-end-selftest.cjs`、`node scripts/exercise-answered-selftest.cjs`、`node scripts/stop-selftest.cjs`、`node scripts/forum-selftest.cjs`、`node scripts/completion-state-selftest.cjs`（这些脚本入库在 `scripts/`，按 `__dirname` 找主源码，从任意 cwd 跑结果相同）
 
 写项目文档或解释时，引用这些关键词/命令，不要引用行号。
 
@@ -180,7 +191,7 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 
 `Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` / `已发言` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它走到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
 
-讨论区叶子在目录里的状态文本只有「已发言」/「未发言」两种（既没有分数也没有百分比），`已发言` 必须算 completed——漏掉它，脚本会对同一条讨论**反复交棒**：`handleForum` 见「已发言」返回 true → 目录侧 `markProgress` 清掉失败计数 → 重扫又选中同一条 → 再开一个标签，永远到不了 `maxAttempts`。实机 23 条讨论叶子的状态文本抽样见 `OBSERVE.md`。`node tmp/completion-state-selftest.cjs` 覆盖这两条与分数/百分比优先级。
+讨论区叶子在目录里的状态文本只有「已发言」/「未发言」两种（既没有分数也没有百分比），`已发言` 必须算 completed——漏掉它，脚本会对同一条讨论**反复交棒**：`handleForum` 见「已发言」返回 true → 目录侧 `markProgress` 清掉失败计数 → 重扫又选中同一条 → 再开一个标签，永远到不了 `maxAttempts`。实机 23 条讨论叶子的状态文本抽样见 `OBSERVE.md`。`node scripts/completion-state-selftest.cjs` 覆盖这两条与分数/百分比优先级。
 
 ## 批次数
 
@@ -210,10 +221,10 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - `markProgress(key)`：子标签确认本知识点做成了时清掉来源目录上的计数。目录侧只负责交棒、看不到内容页结果，若只在交棒时 `bump`，服务端回写慢的条目（作业实测第 3 轮才翻成已完成）会在做完之前就数满 `maxAttempts` 被跳过。
 - 「做成了」的判据必须严：`AiWorkspaceRunner.run()` 里 `progressed` 与 `ok` 分开——未知类型分支（`ok = true`）**不算进展**，否则目录会为它反复交棒、永远到不了 `maxAttempts`；`handleExercise` 也只在真遇到「已提交」或成功作答的题时才返回 true（`didWork && allSubmitted`），题号列表为空、题面读不到、`autoAI` 关闭这些「什么都没做」的路径一律返回 false。
 - `markRefused` / `markProgress` 都走内部 `_writeToOpener(key, value)`：写的是 `window.opener.sessionStorage`（子标签只有自己那份拷贝，写自己那份目录读不到），`value === null` 表示删键。整个读写都包在 try 里：拿不到 opener、跨源、窗口正在导航时返回 false，**绝不把异常抛给调用方**（它挂在 `autoSelect()` 之前，抛出去会让目录永久停等）。
-- `reset(key)` 在条目或批次子项有进展时清零计数。
+- `reset(key)` 在条目或批次子项有进展时清零计数，但**不碰哨兵**（`-1` 跳过 / `-2` 拒答原样保留，与 `bump` 同一规矩）。这不是洁癖：`handleBatch` 收尾把父批次标成 `-2` 后返回 `true`，`run()` 紧接着的 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` 只认 `-1`，以前会把 `-2` 删掉 → 下一轮重扫又进同一个章节（它依旧是「进行中」）→ 再标一次、再被删一次，整页重载无限循环。
 - `clear()` 与 `Store.clearPendingAutoStart()` 一起接到面板的清除失败动作上。
 
-`node tmp/failgate-selftest.cjs` 覆盖计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默五项（用桩模拟「目录那份 + 子标签拷贝」两个 sessionStorage）。
+`node scripts/failgate-selftest.cjs` 覆盖计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默 / 拒答提示跨重载去重 / 目录侧拒答标记 / **reset 不抹哨兵**八项（用桩模拟「目录那份 + 子标签拷贝」两个 sessionStorage）。
 
 有意使用 sessionStorage 语义：关闭标签即清空。不要用 FailGate 跨会话记忆课程进度。
 
@@ -289,7 +300,7 @@ API 行为：
 - 思考/推理选项与流式均可配置。
 - 手动 max tokens 被遵守；启用思考时自动 max tokens 更大。
 
-标准答题 prompt 是 `SysPmt_Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node tmp/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `SysPmt_Discussion`（正文夹在 `<AI讨论区Prompt>` 标记之间，由 `Solver.buildForumPrompt()` 硬编码，同一个自测守）。期望的最终模型输出是纯 JSON，如：
+标准答题 prompt 是 `SysPmt_Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node scripts/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `SysPmt_Discussion.md`（正文夹在 `<AI讨论区Prompt>` 标记之间，由 `Solver.buildForumPrompt()` 硬编码，同一个自测守）。期望的最终模型输出是纯 JSON，如：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
 
@@ -327,7 +338,7 @@ API 行为：
 
 选项字母表是模块级 `OPTION_LETTERS = "A"–"Z"`（v1.4.2 起，不再写死 A–F）：平台题目选项没有确认的上限，映射时按实际 `optionCount` 过滤，被丢掉的越界字母会打一条 warning。非 JSON 回退在原始文本里取字母时用 `\b[A-Z]\b`，只认独立成词的单个字母——模型用英文解释时词内字母（`The` 里的 `e`）不该被当成选项；代价是 `AB` 这种连写不做拆分，多选请让它走 JSON 数组。
 
-改这里跑 `node tmp/parse-answer-selftest.cjs`（从脚本抽出方法体执行，覆盖肯定 / 否定 / JSON / 其他题型回退 / 选项映射）。遇到无法可靠分类的新表达先记样本再补最小规则，不要扩成自然语言分类器。
+改这里跑 `node scripts/parse-answer-selftest.cjs`（从脚本抽出方法体执行，覆盖肯定 / 否定 / JSON / 其他题型回退 / 选项映射）。遇到无法可靠分类的新表达先记样本再补最小规则，不要扩成自然语言分类器。
 
 不要给肯定/否定加「整句语义判断」：`不` 是刻意选的宽标记，句子里出现「不」就按否定处理，宁可判错也不要判反。
 
@@ -344,7 +355,7 @@ API 行为：
 - 交付中不编辑 `ref/`。
 - 发现新的坑时，补入「常见坑」章节（确有再补）。
 - 完成一整个大任务的改动后，起一个子代理审查改动，按需修改后再提交。
-- commit 说明使用声明式表述：描述改动后的系统状态/能力（如「V2 入口经新标签交接驱动播放」），不用动作式（如「修复视频死循环」）。
+- commit 说明使用声明式表述，只说重点。
 
 ## 常见坑
 
@@ -352,6 +363,7 @@ API 行为：
 - 批次子项选择器如果只限定在 `section` 下会漏掉 `.leaf_list__wrap`。
 - 不先检查分数/百分比就把 `进行中` 当作未完成，会误判混合状态字符串。
 - 不使用 FailGate 直接重试条目会造成无限重载循环。
+- `reset()` 必须跳过哨兵：章节（批次）里只剩被 AI 拒答的子项时，`handleBatch` 收尾把父批次标成 `-2` 并返回 `true`，而 `run()` 的清零动作只排除 `-1` —— 哨兵被删掉后下一轮重扫又进同一章节（它永远停在「进行中」）、再标一次、再被删一次，就是「点进去→刷新→再点进去」的整页重载死循环（v2.1.5 修）。任何「有进展就清零」的新代码都要走 `FailGate.reset()`，别自己 `delete map[key]`。
 - 把跳过的条目标记为失败会产生噪声式误报；有意跳过用 `FailGate.skip()`。
 - V2 目录条目点击会**新开标签**（不是同标签导航）；在目录文档里找 `video`/作业元素必然「未找到 → 重载 → 再点 → 标签无限增长」。交棒用 `HANDOFF`，且 `run()` 收到 `HANDOFF` 时不得 `returnToList()`。
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
