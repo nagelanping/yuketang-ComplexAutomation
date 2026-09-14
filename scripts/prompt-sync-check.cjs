@@ -1,12 +1,11 @@
 // 断言 prompt 源文件与脚本内硬编码的 system 数组逐行一致（两份 prompt 都要过）：
-//   SysPmt_Homework.md 的 <AI识图作业Prompt> 区块 ↔ Solver.buildPrompt()
-//   SysPmt_Discussion.md 的 <AI讨论区Prompt> 区块 ↔ Solver.buildForumPrompt()
-// 用法：node tmp/prompt-sync-check.cjs（文件路径按脚本所在目录解析，跟 cwd 无关）
+//   Prompt/Homework.md 的 <AI识图作业Prompt> 区块 ↔ Solver.buildPrompt()
+//   Prompt/Discussion.md 的 <AI讨论区Prompt> 区块 ↔ Solver.buildForumPrompt()
+// 用法：node scripts/prompt-sync-check.cjs（文件路径按脚本所在目录解析，跟 cwd 无关）
 const fs = require("fs");
 const assert = require("assert");
 
-// 路径一律按脚本所在目录解析：`node tmp/prompt-sync-check.cjs` 与 `cd tmp && node prompt-sync-check.cjs` 都能跑，
-// 不依赖 cwd（其它自测也是 `__dirname + "/../"` 这个写法）。
+// 路径一律按脚本所在目录解析：`node scripts/x.cjs` 与 `cd scripts && node x.cjs` 都能跑，不依赖 cwd。
 const repoFile = (name) => __dirname + "/../" + name;
 const js = fs.readFileSync(repoFile("yuketang-ComplexAutomation.user.js"), "utf8");
 
@@ -32,20 +31,33 @@ const mdBodyOf = (file, openTag, closeTag) => {
   return body;
 };
 
+// 按标记找 Prompt/ 下的源文件，不写死文件名：改名或换目录都不会让这个守卫失效
+// （这份文件名已经改过两次：SysPmt_Discussion → .md → Prompt/Discussion.md）。
+const promptFiles = fs
+  .readdirSync(repoFile("Prompt"))
+  .filter((f) => f.endsWith(".md"))
+  .map((f) => "Prompt/" + f);
+const fileOfMarker = (marker) => {
+  const hits = promptFiles.filter((f) =>
+    fs.readFileSync(repoFile(f), "utf8").includes(marker),
+  );
+  assert.strictEqual(
+    hits.length,
+    1,
+    `Prompt/ 下应恰好有 1 个文件含 ${marker}，实际 ${hits.length} 个：${hits.join("、") || "无"}`,
+  );
+  return hits[0];
+};
+
 const cases = [
-  {
-    file: "SysPmt_Homework.md",
-    open: "<AI识图作业Prompt>",
-    close: "</AI识图作业Prompt>",
-    fn: "buildPrompt",
-  },
-  {
-    file: "SysPmt_Discussion.md",
-    open: "<AI讨论区Prompt>",
-    close: "</AI讨论区Prompt>",
-    fn: "buildForumPrompt",
-  },
-];
+  { marker: "<AI识图作业Prompt>", fn: "buildPrompt" },
+  { marker: "<AI讨论区Prompt>", fn: "buildForumPrompt" },
+].map(({ marker, fn }) => ({
+  file: fileOfMarker(marker),
+  open: marker,
+  close: marker.replace("<", "</"),
+  fn,
+}));
 
 for (const c of cases) {
   const codeLines = codeLinesOf(c.fn);

@@ -2938,7 +2938,7 @@
       ].join("\n");
       return { system };
     },
-    // 讨论区回复的 system prompt。正文与 SysPmt_Discussion.md 的 <AI讨论区Prompt> 区块逐行一致，
+    // 讨论区回复的 system prompt。正文与 Prompt/Discussion.md 的 <AI讨论区Prompt> 区块逐行一致，
     // 由 scripts/prompt-sync-check.cjs 守漂移（与 buildPrompt() 同一套规矩：改 md 后同步代码）。
     buildForumPrompt() {
       const system = [
@@ -3042,7 +3042,7 @@
     },
     // 两种用法：
     // - 作业答题：只吃截图（imageDataUrl），题型判定与选项数都不下发给模型（prompt 是 buildPrompt() 的固定
-    //   system 文本，见 SysPmt_Homework.md）；
+    //   system 文本，见 Prompt/Homework.md）；
     // - 讨论区回复：`askAI(null, { systemPrompt, userText })`，纯文本进纯文本出（该页无字体混淆，见 OBSERVE.md）。
     async askAI(imageDataUrl, { systemPrompt = "", userText = "" } = {}) {
       const saved = Store.getAIConf();

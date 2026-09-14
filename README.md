@@ -26,9 +26,11 @@
 ## 文件
 
 - `yuketang-ComplexAutomation.user.js`：主 userscript，单文件交付。
+- `Prompt/`：两份 prompt 源文本（`Homework.md` 作业答题、`Discussion.md` 讨论区回复），与脚本里硬编码的 system 文本逐行一致。
 - `AGENTS.md`：面向 LLM Agent 的架构说明，开发者也可参考。
 - `scripts/`：开发期检查脚本（10 个 `*-selftest.cjs`、`prompt-sync-check.cjs`）与 `ykt-inspect/`（BiDi 调试用小工具）。改动代码后按 `AGENTS.md` 的「必查项」跑。
 - `tmp/`：本地诊断素材（页面抓取、站点 bundle、字体素材与截图、一次性探针），不入库。结构见 `AGENTS.md` 的「仓库结构」。
+- `archive/`：冻结的历史（当前是 `dev-log/v1-to-v2/` 的开发日志与审查报告）。
 - `ref/`：参考脚本来源，保留用于审计和对照。
 
 ## 安装 & 使用

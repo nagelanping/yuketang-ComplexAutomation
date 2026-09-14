@@ -2,22 +2,30 @@
 
 本文件为编码代理提供本仓库的项目专属规则。
 
-先按需阅读以下 `.md` 文档了解具体情况：
+先按需阅读以下文档了解具体情况（标「如存在」的按需读，没有就跳过）：
 
+一. 本文件
+
+- `AGENTS.md`：本文件。任务完成后按需维护对应区域。
+
+二. 当前状况
+
+- `LOG.md`（如存在）：当前阶段的开发记录——目标、结果、关键字段/行为发现。**接手任务先看根目录的它**；没有就是这一阶段还没开始记，按需新建。
+- `WORKFLOW.md`、`AUDIT.md`（如存在）：当前阶段的工作流程与阶段性审查报告，按进展维护。
 - `OBSERVE.md`：雨课堂**实机行为记录**（按路由分节）。涉及网页行为的判断以它为准，新观测回填这里。该文件被 `.gitignore` 忽略，属本地工作笔记。
 - `FIREFOX.md`：人机协同的 Firefox 实机检测方法（`ykt-ff` CLI 用法与注意）。
-- `AUDIT.md`：阶段性审查报告与修改建议。
-- `WORKFLOW.md`：按照 `AUDIT.md` 进行代码修改的流程。需要根据进展进行维护。
-- `LOG.md` ：简要记录每次任务，包含目标、结果、关键字段/行为发现记录。
-- `AGENTS.md`：本文件。任务完成后按需维护对应区域。
+
+三. 历史（只在需要追查较长变更时看）
+
+- `archive/dev-log/v1-to-v2/`：v1→v2 阶段的 `LOG.md` / `WORKFLOW.md` / `AUDIT.md` 存档，冻结不改。当前阶段根目录若没有同名文件，先来这里翻历史。
 
 ## 项目
 
 雨课堂复合自动化 userscript，单文件交付：
 
 - 主源码：`yuketang-ComplexAutomation.user.js`
-- AI 作业答题的 prompt 源（无需查看）：`SysPmt_Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `scripts/prompt-sync-check.cjs` 守）
-- 讨论区回复的 prompt 源（无需查看）：`SysPmt_Discussion.md`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，同一个自测守）
+- AI 作业答题的 prompt 源（无需查看）：`Prompt/Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `scripts/prompt-sync-check.cjs` 守）
+- 讨论区回复的 prompt 源（无需查看）：`Prompt/Discussion.md`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，同一个自测守）
 - 仅作参考的代码：`ref/`
 
 userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start` 运行。
@@ -28,10 +36,12 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 ## 仓库结构
 
-顶层三块附料，各有明确职责，别再往别处塞文件：
+附料各归其位，别再往别处塞文件：
 
+- `Prompt/`（**入库**）：prompt 源文本。`Homework.md`（作业答题，标记 `<AI识图作业Prompt>`）、`Discussion.md`（讨论区回复，标记 `<AI讨论区Prompt>`）。名字可以改、位置可以挪——`scripts/prompt-sync-check.cjs` 是按标记找文件的，不认文件名。
 - `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-inspect/` 是 BiDi 调试小工具（`launch.sh` 起带 `--remote-debugging-port` 的 Firefox，`bi.mjs` 驱动）。新增检查脚本一律放这里。
 - `tmp/`（**gitignore**）：本地诊断素材与一次性探针，留作以后参考。按来源分目录：`ai-captures/`（AI 请求抓取：prompt/请求体/题图）、`dom-samples/`（页面 DOM 片段）、`site-bundles/`（站点 chunk 抓取）、`font/`（字体反混淆与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、截图、`font-*.cjs`）、`probes/`（一次性 DOM/网络探针）、`firefox-marionette/`（从 omni.ja 摘出的 marionette 协议源码，`ykt-ff` 就是照它写的）、`attic/`（旧提交草稿）。诊断脚本与它用的素材放同一个子目录，路径按 `__dirname` 找，不依赖 cwd。
+- `archive/`（**入库**）：冻结不改的历史。当前是 `dev-log/v1-to-v2/`（v1→v2 阶段的 LOG/WORKFLOW/AUDIT）。
 - `ref/`（**入库**）：参考脚本来源，只读不改。
 
 临时文件别写进仓库：根分区的 `/tmp` 是 tmpfs（断电即失），只放一次性的中间产物（`ykt-ff evalf` 的探针文件、`ykt-ff html > /tmp/page.html` 之类的转储）；值得留档的诊断结果才写进 `tmp/` 对应子目录。
@@ -290,7 +300,7 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 3. 检测题型。
 4. 通过分层选择器解析可见的选项容器/元素。
 5. 通过 `GM_xmlhttpRequest` 调用 OpenAI 兼容的多模态 API。
-   `askAI(imageDataUrl, { systemPrompt, userText } = {})`：不传 `userText` 时按作业答题走——只吃截图，题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `SysPmt_Homework.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。传了 `userText` 就是纯文本请求（讨论区）：`system` 取 `systemPrompt`（`buildForumPrompt()`），user 消息里放 `{ type: "text" }` / `{ type: "input_text" }` 而不是图片 part。两条路共用同一套请求组装、流式、重试与 `StopGate` 中止逻辑，改动别只改一条。
+   `askAI(imageDataUrl, { systemPrompt, userText } = {})`：不传 `userText` 时按作业答题走——只吃截图，题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `Prompt/Homework.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。传了 `userText` 就是纯文本请求（讨论区）：`system` 取 `systemPrompt`（`buildForumPrompt()`），user 消息里放 `{ type: "text" }` / `{ type: "input_text" }` 而不是图片 part。两条路共用同一套请求组装、流式、重试与 `StopGate` 中止逻辑，改动别只改一条。
 6. 解析模型响应并选择/提交答案。
 
 API 行为：
@@ -300,7 +310,7 @@ API 行为：
 - 思考/推理选项与流式均可配置。
 - 手动 max tokens 被遵守；启用思考时自动 max tokens 更大。
 
-标准答题 prompt 是 `SysPmt_Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node scripts/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `SysPmt_Discussion.md`（正文夹在 `<AI讨论区Prompt>` 标记之间，由 `Solver.buildForumPrompt()` 硬编码，同一个自测守）。期望的最终模型输出是纯 JSON，如：
+标准答题 prompt 是 `Prompt/Homework.md`（正文夹在 `<AI识图作业Prompt>` 标记之间）。若答题行为变化，检查并按需更新该文件，并同步编码到脚本（`node scripts/prompt-sync-check.cjs` 会按标记取正文逐行比对）。讨论区回复另有 `Prompt/Discussion.md`（正文夹在 `<AI讨论区Prompt>` 标记之间，由 `Solver.buildForumPrompt()` 硬编码，同一个自测守）。期望的最终模型输出是纯 JSON，如：
 
 `{"type":"choice|multiple|truefalse|fillblank|refuse","answers":["A"]}`
 
@@ -372,7 +382,7 @@ API 行为：
 - `pendingAutoStart` 的 `classroomId` 与 `returnUrl` 必须成对，读写两侧都管：`Store.setPendingAutoStart` 在**换课堂且这次没有新目录地址**时直接返回、不覆盖旧记录；`AiWorkspaceRunner.getReturnUrl()` **只要路由给得出课堂 id 就必须与 pending 对得上**（V2 内容页也不例外，别再给那条分支开后门）。两侧缺一都会留下「课堂 B 的 id + 课堂 A 的目录地址」，把标签导航去另一个课堂。
 - 讨论（`taolun`/`forum`）子项与顶层讨论条目现在是**交棒**处理（v2.1.0 起）：AI 开着时 `openContentEntry` 交棒给新标签，论坛页由 `AiWorkspaceRunner.handleForum()` 读教师正文、文本问 AI、填回复框发表，再 `returnToSource` 回目录重扫；`autoAI` 关闭时仍按老办法就地 `FailGate.skip`（没有内容可发，交棒只会空转）。`autoComment` 开关与面板勾选框已删除，不要加回来。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
-- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 在既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `AUDIT.md` 第 13 条）。
+- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `archive/dev-log/v1-to-v2/AUDIT.md` 第 13 条）。
 - `html2canvas` 截图把中文渲染成错字，根因是页面加载的混淆字体（DOM 文本被该字体做了字形置换），不是截图代码或图片本身；修复靠 `Decipherer` 先把 DOM 还原为真实中文，再在截图 `onclone` 里换掉字体栈。只改 `@font-face` 不管用。
 - 题目（exercise）跑在 `#iframeExerciseId` iframe（`/v2/web/iframe-exercise/…`）内，主文档既没有题目 DOM 也没有混淆字体；若在 iframe 分支直接 `return`，`Decipherer` 不会在 iframe 内运行，反混淆失效（DOM 仍是错字，复制与截图都不对）。反混淆必须在 iframe 分支里先启动。
 - 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
