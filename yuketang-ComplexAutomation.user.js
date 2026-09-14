@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         雨课堂复合自动化
 // @namespace    https://github.com/nagelanping/yuketang-ComplexAutomation
-// @version      2.1.4
+// @version      2.1.5
 // @description  雨课堂视频/PPT自动浏览 + OpenAI-compatible API 多模态LLM截图答题
 // @author       Optance(nagelanping)
 // @license      GPL-3.0-only
@@ -450,8 +450,13 @@
     skipped(key) {
       return this._read()[key] === -1;
     },
+    // 「有进展 → 清零计数」不能顺手抹掉哨兵：批次收尾把父批次标成 -2（拒答）后返回 true，
+    // run() 会照常 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` ——
+    // `skipped` 只认 -1，于是 -2 被删掉，下一轮重扫又进同一个批次（章节仍是「进行中」）、
+    // 再标一次 -2、再被删一次：整页重载的无限循环。哨兵是扫描判据，只能由 skip/markRefused 改。
     reset(key) {
       const map = this._read();
+      if (Number(map[key]) < 0) return; // -1 主动跳过 / -2 AI 拒答：原样保留（与 bump 一致）
       if (key in map) {
         delete map[key];
         this._write(map);
@@ -2933,8 +2938,8 @@
       ].join("\n");
       return { system };
     },
-    // 讨论区回复的 system prompt。正文与 SysPmt_Discussion 的 <AI讨论区Prompt> 区块逐行一致，
-    // 由 tmp/prompt-sync-check.cjs 守漂移（与 buildPrompt() 同一套规矩：改 md 后同步代码）。
+    // 讨论区回复的 system prompt。正文与 SysPmt_Discussion.md 的 <AI讨论区Prompt> 区块逐行一致，
+    // 由 scripts/prompt-sync-check.cjs 守漂移（与 buildPrompt() 同一套规矩：改 md 后同步代码）。
     buildForumPrompt() {
       const system = [
         "# 角色",
