@@ -1,9 +1,11 @@
 #!/bin/sh
 # Start the persistent yuketang Firefox (GUI + marionette on 127.0.0.1:2828).
-# Profile /home/Si/.ykt-firefox keeps cookies/login across restarts.
-if pgrep -f "/usr/lib/firefox/firefox --profile /home/Si/.ykt" >/dev/null 2>&1; then
+# Profile <repo>/tmp/ykt-firefox keeps cookies/login across restarts (gitignored).
+PROFILE="$(cd "$(dirname "$0")/../.." && pwd)/tmp/ykt-firefox"
+mkdir -p "$PROFILE"
+if pgrep -f -- "--profile $PROFILE" >/dev/null 2>&1; then
   echo "already running"
   exit 0
 fi
-nohup env MOZ_MARIONETTE=1 firefox --profile /home/Si/.ykt-firefox 'https://yuketang.cn/' > /tmp/ykt-ff.log 2>&1 &
+nohup env MOZ_MARIONETTE=1 firefox --profile "$PROFILE" 'https://yuketang.cn/' > /tmp/ykt-ff.log 2>&1 &
 echo "started (marionette on 127.0.0.1:2828); control with: scripts/ykt-ff/ykt-ff <eval|evalf|open|url|title|html>"

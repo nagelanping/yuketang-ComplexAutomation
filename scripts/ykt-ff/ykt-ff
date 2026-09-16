@@ -11,7 +11,7 @@
 //   ykt-ff open <url>      navigate active tab
 //   ykt-ff url | title     print location.href / document.title
 //   ykt-ff html            print document.documentElement.outerHTML
-// Requires: MOZ_MARIONETTE=1 firefox --profile /home/Si/.ykt-firefox (port 2828, see user.js).
+// Requires: MOZ_MARIONETTE=1 firefox --profile <repo>/tmp/ykt-firefox (port 2828, see user.js).
 
 const net = require('net');
 const fs = require('fs');

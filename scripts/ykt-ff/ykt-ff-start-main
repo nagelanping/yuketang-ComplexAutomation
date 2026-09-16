@@ -4,7 +4,7 @@
 # All user data / extensions (Tampermonkey + userscripts) are intact.
 
 # 先释放端口 2828：若旧的 ykt 专用浏览器还在，关掉它（其 profile 数据保留）
-pkill -f "/usr/lib/firefox/firefox --profile /home/Si/.ykt-firefox" 2>/dev/null
+pkill -f "--profile $(cd "$(dirname "$0")/../.." && pwd)/tmp/ykt-firefox" 2>/dev/null
 sleep 1
 
 if pgrep -f "/usr/lib/firefox/firefox" >/dev/null 2>&1; then
