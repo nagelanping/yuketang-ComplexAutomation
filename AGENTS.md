@@ -2,7 +2,7 @@
 
 本文件为编码代理提供本仓库的项目专属规则。
 
-先按需阅读以下文档了解具体情况（标「如存在」的按需读，没有就跳过）：
+先按需阅读以下文档了解具体情况（文件不存在则跳过）：
 
 一. 本文件
 
@@ -10,22 +10,22 @@
 
 二. 当前状况
 
-- `LOG.md`（如存在）：当前阶段的开发记录——目标、结果、关键字段/行为发现。**接手任务先看根目录的它**；没有就是这一阶段还没开始记，按需新建。
+- `LOG.md`（如存在）：当前阶段的开发记录——目标、结果、关键字段/行为发现。
 - `WORKFLOW.md`、`AUDIT.md`（如存在）：当前阶段的工作流程与阶段性审查报告，按进展维护。
 - `OBSERVE.md`：雨课堂**实机行为记录**（按路由分节）。涉及网页行为的判断以它为准，新观测回填这里。该文件被 `.gitignore` 忽略，属本地工作笔记。
 - `FIREFOX.md`：人机协同的 Firefox 实机检测方法（`ykt-ff` CLI 用法与注意）。
 
 三. 历史（只在需要追查较长变更时看）
 
-- `archive/dev-log/v1-to-v2/`：v1→v2 阶段的 `LOG.md` / `WORKFLOW.md` / `AUDIT.md` 存档，冻结不改。当前阶段根目录若没有同名文件，先来这里翻历史。
+- `archive/dev-log/v1-to-v2/`：v1→v2 阶段的 `LOG.md` / `WORKFLOW.md` / `AUDIT.md` 存档，冻结不改。当前阶段根目录若没有同名文件，先来这里查。
 
 ## 项目
 
 雨课堂复合自动化 userscript，单文件交付：
 
 - 主源码：`yuketang-ComplexAutomation.user.js`
-- AI 作业答题的 prompt 源（无需查看）：`Prompt/Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `scripts/prompt-sync-check.cjs` 守）
-- 讨论区回复的 prompt 源（无需查看）：`Prompt/Discussion.md`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，同一个自测守）
+- AI 作业答题的 prompt 源（无需查看）：`Prompt/Homework.md`（正文在 `<AI识图作业Prompt> … </AI识图作业Prompt>` 之间，与脚本内 `Solver.buildPrompt()` 逐行一致，由 `scripts/prompt-sync-check.cjs` 检查）
+- 讨论区回复的 prompt 源（无需查看）：`Prompt/Discussion.md`（正文在 `<AI讨论区Prompt> … </AI讨论区Prompt>` 之间，与脚本内 `Solver.buildForumPrompt()` 逐行一致，由同一个自测检查）
 - 仅作参考的代码：`ref/`
 
 userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start` 运行。
@@ -36,15 +36,16 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 ## 仓库结构
 
-附料各归其位，别再往别处塞文件：
+各目录用途固定，新文件放入对应目录：
 
 - `Prompt/`（**入库**）：prompt 源文本。`Homework.md`（作业答题，标记 `<AI识图作业Prompt>`）、`Discussion.md`（讨论区回复，标记 `<AI讨论区Prompt>`）。名字可以改、位置可以挪——`scripts/prompt-sync-check.cjs` 是按标记找文件的，不认文件名。
-- `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-inspect/` 是 BiDi 调试小工具（`launch.sh` 起带 `--remote-debugging-port` 的 Firefox，`bi.mjs` 驱动）；`ykt-ff/` 是 marionette 实机检测的三个脚本（`ykt-ff-start`、`ykt-ff-start-main`、`ykt-ff`），不在 PATH 上，从仓库根目录用 `scripts/ykt-ff/<名字>` 调用。新增检查脚本一律放这里。
-- `tmp/`（**gitignore**）：本地诊断素材与一次性探针，留作以后参考。按来源分目录：`ai-captures/`（AI 请求抓取：prompt/请求体/题图）、`dom-samples/`（页面 DOM 片段）、`site-bundles/`（站点 chunk 抓取）、`font/`（字体反混淆与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、截图、`font-*.cjs`）、`probes/`（一次性 DOM/网络探针）、`firefox-marionette/`（从 omni.ja 摘出的 marionette 协议源码，`ykt-ff` 就是照它写的）、`attic/`（旧提交草稿）。诊断脚本与它用的素材放同一个子目录，路径按 `__dirname` 找，不依赖 cwd。
+- `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-ff/` 是 marionette 实机检测的三个脚本（`ykt-ff-start`、`ykt-ff-start-main`、`ykt-ff`），不在 PATH 上，从仓库根目录用 `scripts/ykt-ff/<名字>` 调用。新增检查脚本一律放这里。
+- `tmp/`（**gitignore**）：本地诊断素材与一次性探针，留作以后参考。按来源分目录：`ai-captures/`（AI 请求抓取：prompt/请求体/题图）、`dom-samples/`（页面 DOM 片段）、`site-bundles/`（站点 chunk 抓取）、`font/`（字体反混淆与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、截图、`font-*.cjs`）、`probes/`（一次性 DOM/网络探针）、`firefox-marionette/`（从 omni.ja 摘出的 marionette 协议源码，`ykt-ff` 就是照它写的）、`attic/`（旧提交草稿）、`ykt-firefox/`（专用 Firefox profile，198M，登录态跨重启保留；删掉只丢登录态，`ykt-ff-start` 会重建）。诊断脚本与它用的素材放同一个子目录，路径按 `__dirname` 找，不依赖 cwd。
+- 脚本产物只允许写到仓库内或 `/tmp`：需要留档的写 `tmp/<用途>/`，一次性的中转写 `/tmp`，**不要**在 `$HOME` 下新建目录或文件（Firefox 自己写的 `~/.mozilla`、`~/.cache/mozilla`、日常 profile 除外）。脚本里的路径一律按 `$(dirname "$0")/../..` 或 `import.meta.url` 解析到仓库根，不要写 `$HOME/...`。
 - `archive/`（**入库**）：冻结不改的历史。当前是 `dev-log/v1-to-v2/`（v1→v2 阶段的 LOG/WORKFLOW/AUDIT）。
 - `ref/`（**入库**）：参考脚本来源，只读不改。
 
-临时文件别写进仓库：根分区的 `/tmp` 是 tmpfs（断电即失），只放一次性的中间产物（`ykt-ff evalf` 的探针文件、`ykt-ff html > /tmp/page.html` 之类的转储）；值得留档的诊断结果才写进 `tmp/` 对应子目录。
+临时文件不进仓库：根分区 `/tmp` 是 tmpfs（重启即清空），只放一次性中间产物（`ykt-ff evalf` 的探针文件、`ykt-ff html > /tmp/page.html` 之类的转储）；需要留档的诊断结果写入 `tmp/` 对应子目录。
 
 ## 必查项
 
@@ -53,10 +54,10 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - JS 逻辑改动后跑相关的最小自测（`node scripts/<关键词>-selftest.cjs`，见「代码导航」）；prompt 源或 `build*Prompt()` 改动后跑 `node scripts/prompt-sync-check.cjs`。
 - 运行时验证靠手动：
   在脚本管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
-- 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。脚本在 `scripts/ykt-ff/`：用 `scripts/ykt-ff/ykt-ff-start` 启动，用 `scripts/ykt-ff/ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
+- 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `tmp/ykt-firefox`（仓库内、gitignored，登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。脚本在 `scripts/ykt-ff/`：用 `scripts/ykt-ff/ykt-ff-start` 启动，用 `scripts/ykt-ff/ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
   多标签时 `ykt-ff` 只作用于活动标签，先 `ykt-ff tabs` 看清、再 `ykt-ff tab <idx>` 切换；句柄顺序在不同会话间不稳定，`tab <idx>` 可能落到 `(privileged)` 窗口并报 `ExecuteScript ... not supported for privileged browsing contexts`。细节见 `FIREFOX.md`。
 
-若某次任务只改了文档或 prompt，请说明 `node --check` 是否没有必要。
+任务只改动文档或 prompt 时，说明 `node --check` 是否无需执行。
 
 ## 版本管理
 
@@ -110,9 +111,9 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 `boot()` -> 跳过 iframe -> `createPanel()` -> 加载 `pendingAutoStart` -> `start()` 路由分发。
 
-`createPanel()` 里 `invokeStart()` 带一个 `running` 闸门：连点「开始」或在 1.2 秒自动恢复窗口内手点，都只会启动一个 Runner（否则同一目录并发跑两份，同一条目点两次、开两个标签、FailGate 计数双份）。闸门由 `resetStartButton()` 与 `runRoute()` 的 `.finally(() => panel.releaseStart())` 放开——**必须保留后者**：`HANDOFF` 之后目录处于「等新标签回跳」的空闲态，`releaseStart()` 不动按钮文案（仍显示「运行中」）但让用户还能手动再点「开始」恢复，否则一旦新标签没回来（弹窗被拦、标签崩溃、课堂 `waitForEnd` 挂起）用户只能刷新页面。
+`createPanel()` 中 `invokeStart()` 带 `running` 闸门：连点「开始」，或在 1.2 秒自动恢复窗口内手动点击，都只启动一个 Runner（否则同一目录并发运行两份，同一条目点两次、开两个标签、FailGate 计数翻倍）。闸门由 `resetStartButton()` 与 `runRoute()` 的 `.finally(() => panel.releaseStart())` 放开。`.finally` 中的 `releaseStart()` 必须保留：`HANDOFF` 之后目录处于「等新标签回跳」的空闲态，`releaseStart()` 不修改按钮文案（仍显示「运行中」）但允许用户手动再点「开始」恢复；若移除，新标签未回来（弹窗被拦、标签崩溃、课堂 `waitForEnd` 挂起）时用户只能刷新页面。
 
-代价写在明处：**交棒窗口内手动再按「开始」不会被挡**（那时上一轮 Runner 已经结束、闸门已放开），会重扫、重交棒同一条目并多开一个标签、多一次 `FailGate.bump`。这是为了保住手动恢复能力而接受的取舍；要堵这个窗口就得引入「在等新标签」状态 + 超时，属实机验证后再定的事。
+已知代价：交棒窗口内手动再按「开始」不会被拦截（此时上一轮 Runner 已结束、闸门已放开），会重扫并再次交棒同一条目，多开一个标签、多一次 `FailGate.bump`。这是为保留手动恢复能力而接受的取舍；消除该窗口需要引入「等待新标签」状态与超时，留待实机验证后再决定。
 
 `start()` 中的路由分发：
 
@@ -122,7 +123,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 
 UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单、功能开关、日志、启动/暂停/终止/重置动作和清除失败动作。
 
-**暂停与终止是两件事**：`PauseGate` 只让 `Utils.sleep` 在计时结束后继续挂起——在途的 AI 请求不受影响，模型返回后流程照样继续选答案、点提交，且 `pendingAutoStart` 还在，刷新页面又会自动续跑；`StopGate` 是硬停：`stop()` 立刻 abort 在途请求（句柄由 `Solver.askAI` 挂在 `StopGate.abortInflight`）、清掉 `pendingAutoStart`、并让面板不再接受「开始」（`invokeStart` 直接返回），恢复只能靠刷新页面（`StopGate` 是模块级对象，随 document 重建）。新增会长时间等待或会继续推进流程的代码时，**必须在入口加 `StopGate.isStopped()` 检查**：当前已覆盖 `Utils.poll`（已终止立刻 resolve(false)）、`Player.waitForEnd` / `observePause`（不再自动恢复播放）、`Solver.askAI`（不发请求、onload/onprogress 丢响应、abort 走 onabort）、`Solver.autoSelectAndSubmit`（不选不提交）、`solveExerciseQuestion`（不截图不重试）、`handleExercise` 两条逐题循环、`handleMedia`、`AiWorkspaceRunner.run`/`autoSelect`/`returnToSource`、`V2Runner.run`/`openContentEntry`/`handleBatch`、两个 Pro Runner 的 `run()`。
+**暂停与终止是两件事**：`PauseGate` 只让 `Utils.sleep` 在计时结束后继续挂起——在途的 AI 请求不受影响，模型返回后流程仍会选答案、点提交，且 `pendingAutoStart` 还在，刷新页面又会自动续跑；`StopGate` 是硬停：`stop()` 立刻 abort 在途请求（句柄由 `Solver.askAI` 挂在 `StopGate.abortInflight`）、清掉 `pendingAutoStart`、并让面板不再接受「开始」（`invokeStart` 直接返回），恢复只能靠刷新页面（`StopGate` 是模块级对象，随 document 重建）。新增会长时间等待或会继续推进流程的代码时，**必须在入口加 `StopGate.isStopped()` 检查**：当前已覆盖 `Utils.poll`（已终止立刻 resolve(false)）、`Player.waitForEnd` / `observePause`（不再自动恢复播放）、`Solver.askAI`（不发请求、onload/onprogress 丢响应、abort 走 onabort）、`Solver.autoSelectAndSubmit`（不选不提交）、`solveExerciseQuestion`（不截图不重试）、`handleExercise` 两条逐题循环、`handleMedia`、`AiWorkspaceRunner.run`/`autoSelect`/`returnToSource`、`V2Runner.run`/`openContentEntry`/`handleBatch`、两个 Pro Runner 的 `run()`。
 
 ## ai-workspace 执行模型
 
@@ -141,12 +142,12 @@ UI 面板在 `createPanel()` 内创建。它负责可见控件、AI 配置表单
 
 1. `autoAI` 关闭 → 记日志返回 `false`（与作业同规矩）。
 2. 页面状态已是「已发言」→ 直接返回 `true`，不再发（服务端状态只在页面加载时更新，见下条）。
-3. 读教师正文 `AiWorkspace.getForumBodyText()`（`.main-text-attachment`）。**只喂任务要求本身，不喂别人的帖子**：机主实机看过，示范帖多是「1.周末回家2.吃了水果」这种一行流水，喂进去会把模型往低质量格式上带。
-4. `Solver.askAI(null, { systemPrompt: Solver.buildForumPrompt().system, userText })` —— **纯文本进纯文本出**。该页 `[class*=encrypted]` 命中 0、样式里没有 `exam_font_`，不存在作业页那种「复制得到错字」的字体混淆，截图只会多一次 OCR 和一轮 html2canvas 的坑。
+3. 读教师正文 `AiWorkspace.getForumBodyText()`（`.main-text-attachment`）。**只传任务要求本身，不传其他用户的帖子**：示范帖多为「1.示例内容2.示例内容」这类一行流水账，传入会把模型输出带向低质量格式。
+4. `Solver.askAI(null, { systemPrompt: Solver.buildForumPrompt().system, userText })` —— **纯文本进、纯文本出**。该页 `[class*=encrypted]` 命中 0、样式里没有 `exam_font_`，不存在作业页的字体混淆，截图只会多一次 OCR 与 html2canvas 的字体处理开销。
 5. `AiWorkspace.normalizeForumReply()` 清掉代码块围栏 / 「回复：」前缀 / 整体引号，并在模型照抄 prompt 示范的两行格式时只取 `Formal Response:` 后面的正文（换行要保留，不能用会把换行压成空格的 `normalizeText`）。`Solver.isRefuseReply(raw)` 命中（prompt 约定做不到就返回 `{refuse}`）时不发表，`FailGate.markRefused(...)` 标记为需人工处理——与作业的 `{"type":"refuse"}` 同一条思路，只是标记形态不同。
-6. 回复框元素必须「poll 判就绪 + 再读一次 DOM」拿：`Utils.poll()` **只 resolve `true`/`false`，不返回 checker 的值**（项目里 `handleExercise` / `handleMedia` 都是 `const ready = await Utils.poll(...); const el = get...()` 这个写法）。v2.1.3 里我写成 `const box = await Utils.poll(() => getForumReplyBox(), ...)`，`box` 就成了 `true`，后面 `box.setRangeText is not a function` / 没有 setter / 没有 `parentElement` 全冒出来——真因是取值写错，不是环境。
-   填框用 `fillForumReplyBox()`：直接 `box.value = text` 不触发 Vue 的 v-model（实测 DOM 有值、组件内 `value` 仍空、发送按钮不解锁），要走 `HTMLTextAreaElement.prototype` 的 `value` setter 赋值 + 补一个 `input` 事件；写完后**回读 `box.value === text` 校验**，失败必须 `panel.log` 出原因（早期版本 `catch (_) { return false; }` 静默吞掉，排查时只看到「未能写入回复框」，无线索）。
-7. 判据：等 `.prompt-send-btn` 摘掉 `disabled`（这是「站点确实收到了正文」的信号）→ `click()` → 轮询 `.forum-content .comment-text` 里出现以本次正文开头的那条。实测点发送后条目**立刻**渲染到列表首位，而状态文案 `div.f12.blue-color` 从「未发言」变「已发言」要**整页重载**才更新（同页等 7.5 秒仍是「未发言」）——所以确认只认楼层，最终状态由目录重扫核对，别拿状态文案当提交成功的判据。
+6. 回复框元素必须「poll 判就绪 + 再读一次 DOM」：`Utils.poll()` **只 resolve `true`/`false`，不返回 checker 的值**（`handleExercise` / `handleMedia` 均为 `const ready = await Utils.poll(...); const el = get...()` 写法）。v2.1.3 曾写成 `const box = await Utils.poll(() => getForumReplyBox(), ...)`，`box` 得到 `true`，随后出现 `box.setRangeText is not a function` / 没有 setter / 没有 `parentElement`——原因是取值写错，不是环境问题。
+   填框用 `fillForumReplyBox()`：直接 `box.value = text` 不触发 Vue 的 v-model（实测 DOM 有值、组件内 `value` 仍为空、发送按钮不解锁），需走 `HTMLTextAreaElement.prototype` 的 `value` setter 赋值并补发 `input` 事件；写入后**回读 `box.value === text` 校验**，失败时 `panel.log` 必须输出原因（早期版本 `catch (_) { return false; }` 静默吞错，排查时只看到「未能写入回复框」，无线索）。
+7. 判据：等 `.prompt-send-btn` 移除 `disabled`（站点收到正文的信号）→ `click()` → 轮询 `.forum-content .comment-text` 出现以本次正文开头的条目。实测点发送后条目立即渲染到列表首位；状态文案 `div.f12.blue-color` 从「未发言」变「已发言」需要整页重载（同页等 7.5 秒仍为「未发言」）。因此提交确认只认楼层，最终状态由目录重扫核对，状态文案不作为提交成功判据。
 
 ## V2 执行模型
 
@@ -163,14 +164,14 @@ V2 有意采用 DOM 进度驱动。不要加入持久化索引游标。
 5. 分发一个 handler：
    - 内容条目（视频 / 顶层作业 / 顶层讨论）：`openContentEntry(course, failKey)` —— 先把 `failKey` 写进 `sessionStorage`（`ykt_handoff_key`，供子标签回写用），再点击目录项；站点**新开标签**（焦点跟随、目录标签原地不动、新标签落在 ai-workspace 路由、`window.opener` 指回目录）处理该知识点。目录标签只点一次、`FailGate.bump` 一次，然后返回特殊值 `HANDOFF`。
    - 批次：`handleBatch` 就地展开（站点在目录内发 XHR 渲染子项，不新开标签），定位第一个未完成子项后同样 `openContentEntry(item, subKey)` 交棒（重置父 key、bump 子 key）。批次里的讨论子项同理（AI 开着才交棒，关掉则就地 `FailGate.skip`）。
-   - 课堂 / 课件概况（`handleClassroom` / `handleCourseware`）：仍是同页 iframe / 弹层内联处理（未实测确认这类会不会也新开标签，保留原路径）。
+   - 课堂 / 课件概况（`handleClassroom` / `handleCourseware`）：仍是同页 iframe / 弹层内联处理（是否也会新开标签未实测确认，保留原路径）。
 6. `run()` 收到 `HANDOFF` 时**直接 return，不调用 `returnToList()` 也不重载目录**——重载会再次点击又开一个新标签（旧死循环根因）。
 7. 被交棒的新标签由 `AiWorkspaceRunner` 处理该知识点，`autoSelect()` 见 `returnUrl` 非空即 `returnToSource()`：用 `window.opener` 把目录标签导航回目录 URL，并 `window.close()` 自身。
 8. 目录被重载后 `boot()` 看到匹配 `pendingAutoStart`，从 `sessionStorage` 恢复面板日志，重启 `V2Runner.run()` 重扫——该项进度已在服务器端更新，跳过并推进下一项。
 
 `V2Runner.run()` 是单条目循环体，不是长期运行的内存遍历。一次 `run()` 只交棒一个内容条目（`HANDOFF`）或处理一个内联条目（课堂 / 课件），之后要么停下等新标签回目录重载、要么 `returnToList()` 重载目录，绝不继续处理第二个内容条目。进度之所以推进，是因为重载后服务器端 DOM 状态变了，而不是脚本记住了「下一个索引」。
 
-启动时向 `pendingAutoStart` 写入 `{classroomId, returnUrl}`。它记录从哪里恢复，而不是从哪个条目恢复。TTL 4 小时（见 `Store.getPendingAutoStart`），目录每条目重载都会续约 `ts`；须大于单条目播放上界，否则长视频交棒后新标签拿不到 `returnUrl`。
+启动时向 `pendingAutoStart` 写入 `{classroomId, returnUrl}`，记录从哪里恢复，而不是从哪个条目恢复。TTL 4 小时（见 `Store.getPendingAutoStart`），目录每条目重载都会续约 `ts`；须大于单条目播放上界，否则长视频交棒后新标签拿不到 `returnUrl`。
 
 `returnToList()` 重载或导航后抛出 `NavigationStop`；`runRoute(...)` 捕获这个内部控制流异常。保留这个模式，让旧的 async 栈在导航后立即停止，而不是继续改动 FailGate 或 UI 状态。
 
@@ -181,7 +182,7 @@ V2 条目进入有意保持 KISS：目录只负责「点一个未完成条目 �
 V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceRunner.handleMedia` 负责起播与刷到完成，进度以重载后目录 DOM 的服务器端状态为准。
 交棒的可靠性：目录交棒后不再自我重载，完全依赖新标签的 `returnToSource` 把目录重载。因此 `AiWorkspaceRunner.run()` 用 try/catch 兜住知识点处理，任何抛错都要继续走到 `autoSelect()`，否则目录会永久停等。FailGate 在目录侧 `openContentEntry` 里 bump，跨「子标签回目录重载」的多次尝试累计，满 `maxAttempts` 后跳过该项；新标签自身不持有跨重载的闸门（其 `_lastAdvanceIndex` 只在直接在本页启动逐项刷时生效）。
 
-面板日志持久化在 `sessionStorage` 的 `ykt_panel_logs`，目录重载后可以保留运行轨迹。保留数量要有上限。
+面板日志持久化在 `sessionStorage` 的 `ykt_panel_logs`，目录重载后保留运行轨迹；保留条数有上限。
 
 ## 完成状态
 
@@ -199,11 +200,11 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 
 这个优先级用于处理混合 UI 文本，如 `1% 进行中` 或 `3/6 进行中`。
 
-`Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` / `已发言` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它走到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
+`Utils.isProgressDone` 是内容页自查与 Pro 路径用的口径，**与目录侧取同一个阈值**：只有 `100%` / `已完成` / `已发言` 算完成，`98%` / `99%` 一律按未完成处理（v1.4.2 起，机主定的策略：临近完成也继续等它达到终值）。两套口径仍各有选择器与调用点，但判定标准不再分叉；改其中一处必须同时改另一处。
 
-讨论区叶子在目录里的状态文本只有「已发言」/「未发言」两种（既没有分数也没有百分比），`已发言` 必须算 completed——漏掉它，脚本会对同一条讨论**反复交棒**：`handleForum` 见「已发言」返回 true → 目录侧 `markProgress` 清掉失败计数 → 重扫又选中同一条 → 再开一个标签，永远到不了 `maxAttempts`。实机 23 条讨论叶子的状态文本抽样见 `OBSERVE.md`。`node scripts/completion-state-selftest.cjs` 覆盖这两条与分数/百分比优先级。
+讨论区叶子在目录中的状态文本只有「已发言」/「未发言」两种（无分数、无百分比），`已发言` 必须判为 completed——若漏判，脚本会对同一条讨论**反复交棒**：`handleForum` 见「已发言」返回 true → 目录侧 `markProgress` 清零失败计数 → 重扫又选中同一条 → 再开一个标签，永远到不了 `maxAttempts`。{N} 条讨论叶子的状态文本实机抽样见 `OBSERVE.md`。`node scripts/completion-state-selftest.cjs` 覆盖这两条与分数/百分比优先级。
 
-## 批次数
+## 批次
 
 批次是顶层列表节点，其内容部分位于内层 `section` 之外。
 
@@ -231,7 +232,7 @@ V2 视频不再在目录文档内就地重放：交棒的新标签 `AiWorkspaceR
 - `markProgress(key)`：子标签确认本知识点做成了时清掉来源目录上的计数。目录侧只负责交棒、看不到内容页结果，若只在交棒时 `bump`，服务端回写慢的条目（作业实测第 3 轮才翻成已完成）会在做完之前就数满 `maxAttempts` 被跳过。
 - 「做成了」的判据必须严：`AiWorkspaceRunner.run()` 里 `progressed` 与 `ok` 分开——未知类型分支（`ok = true`）**不算进展**，否则目录会为它反复交棒、永远到不了 `maxAttempts`；`handleExercise` 也只在真遇到「已提交」或成功作答的题时才返回 true（`didWork && allSubmitted`），题号列表为空、题面读不到、`autoAI` 关闭这些「什么都没做」的路径一律返回 false。
 - `markRefused` / `markProgress` 都走内部 `_writeToOpener(key, value)`：写的是 `window.opener.sessionStorage`（子标签只有自己那份拷贝，写自己那份目录读不到），`value === null` 表示删键。整个读写都包在 try 里：拿不到 opener、跨源、窗口正在导航时返回 false，**绝不把异常抛给调用方**（它挂在 `autoSelect()` 之前，抛出去会让目录永久停等）。
-- `reset(key)` 在条目或批次子项有进展时清零计数，但**不碰哨兵**（`-1` 跳过 / `-2` 拒答原样保留，与 `bump` 同一规矩）。这不是洁癖：`handleBatch` 收尾把父批次标成 `-2` 后返回 `true`，`run()` 紧接着的 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` 只认 `-1`，以前会把 `-2` 删掉 → 下一轮重扫又进同一个章节（它依旧是「进行中」）→ 再标一次、再被删一次，整页重载无限循环。
+- `reset(key)` 在条目或批次子项有进展时清零计数，但**不碰哨兵**（`-1` 跳过 / `-2` 拒答原样保留，与 `bump` 同一规则）。这不是风格问题：`handleBatch` 收尾把父批次标成 `-2` 后返回 `true`，`run()` 随后的 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` 只排除 `-1`，此前会把 `-2` 删除 → 下一轮重扫又进入同一章节（该章节仍为「进行中」）→ 再标一次、再删一次，形成整页重载无限循环。
 - `clear()` 与 `Store.clearPendingAutoStart()` 一起接到面板的清除失败动作上。
 
 `node scripts/failgate-selftest.cjs` 覆盖计数 / 跳过哨兵 / 拒答哨兵 / 进展清零 / 无 opener 静默 / 拒答提示跨重载去重 / 目录侧拒答标记 / **reset 不抹哨兵**八项（用桩模拟「目录那份 + 子标签拷贝」两个 sessionStorage）。
@@ -264,7 +265,7 @@ V2 视频启动保留当前模式：`observePause` 在真实暂停信号到来�
 
 ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正的播放/暂停控件是 `xt-playbutton.xt_video_player_play_btn`（控制条）或 `xt-bigbutton.xt_video_player_big_play_layer`（中央）。`.play-btn-tip` 只是提示，`.xt_video_player_common_icon` 是音量图标——都不是播放控件，`findPlayButton` 不得返回它们（它跳过带 `tip` class 的节点，且不再列出 `.play-btn-tip`/`xt_video_player_common_icon`）。播放器在暂停状态会回退裸 `video.play()`，所以恢复播放需要点击一次真正的播放按钮。`handleMedia` 保持 `startPlayback` 为 `{ allowClick: false }`（快速点击切换按钮会导致播放/暂停闪烁），由带保护、低频的 `observePause` 通过正确按钮点击开始/恢复。
 
-起播静音与「解除静音看门狗」：网站播放器有解除静音看门狗（`timeupdate.volume` 起 1s 定时器，见 `muted` 即强制 `video.muted=false`）。仅设 `media.muted=true` 会在 1 秒内被还原，随后无用户激活的有声播放被浏览器暂停 → 视频卡住。`Player.prepareMedia` 的做法是先真实静音（媒体内部 `muted` 置真，自动播放策略查真实状态而非 JS getter），再用 `Object.defineProperty(media,'muted',{get:()=>true,set:()=>{}})` 冻结属性，令看门狗的赋值变 no-op（`OBSERVE.md` 已实测此序列可连续播放，`freezeMuted` 幂等、`__yktMutedFrozen` 只冻结一次）。副作用：脚本接管的媒体全程静音。`AiWorkspace.keepAlive` 也走 `Player.prepareMedia` 以获得同样冻结，勿再手动逐个赋值 `muted/volume`。
+起播静音与「解除静音看门狗」：网站播放器有解除静音看门狗（`timeupdate.volume` 起 1s 定时器，见 `muted` 即强制 `video.muted=false`）。仅设 `media.muted=true` 会在 1 秒内被还原，随后无用户激活的有声播放被浏览器暂停 → 视频卡住。`Player.prepareMedia` 的做法是先真实静音（媒体内部 `muted` 置真，自动播放策略查真实状态而非 JS getter），再用 `Object.defineProperty(media,'muted',{get:()=>true,set:()=>{}})` 冻结属性，令看门狗的赋值变 no-op（`OBSERVE.md` 已实测此序列可连续播放，`freezeMuted` 幂等、`__yktMutedFrozen` 只冻结一次）。副作用：脚本接管的媒体全程静音。`AiWorkspace.keepAlive` 也走 `Player.prepareMedia` 以获得同样冻结，不要再手动逐个赋值 `muted` / `volume`。
 
 ## Decipherer（字体反混淆）
 
@@ -285,7 +286,7 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 
 题目实际跑在 iframe（`/v2/web/iframe-exercise/{classroom_id}/{leaf_id}?noLeftMenu=1…`，`#iframeExerciseId`）里，所以 `boot()` 在 `Utils.inIframe()` 分支也调用 `Decipherer.start()` 后再早退——否则反混淆在 iframe 内不执行，题目文本仍是错字（复制/截图都不对）。主文档既没有题目 DOM，也没有那个混淆字体。
 
-`html2canvas` 不信任浏览器字体回退：它自行扫描 `@font-face` 并加载 `exam-data-decrypt-font`，用混淆字形渲染已解码的真实码点（表现为部分汉字与标点乱码）。因此解码后 `stripFontFamily` 把该字体从混淆元素（及 characterData 路径的父元素）的 `font-family` 中移除，断掉 html2canvas 的字体来源。页面另有一条跨域 CSS 里（JS 读不到 `cssRules`）的 `!important` font-family 规则强制 exam 字体，普通 inline 压不过，所以 `stripFontFamily` 必须用 inline `!important`（`setProperty(..., "important")`）。
+`html2canvas` 不信任浏览器字体回退：它自行扫描 `@font-face` 并加载 `exam-data-decrypt-font`，用混淆字形渲染已解码的真实码点（表现为部分汉字与标点乱码）。因此解码后 `stripFontFamily` 把该字体从混淆元素（及 characterData 路径的父元素）的 `font-family` 中移除，断掉 html2canvas 的字体来源。页面另有一条跨域 CSS 里（JS 读不到 `cssRules`）的 `!important` font-family 规则强制 exam 字体，普通 inline 规则无法覆盖，所以 `stripFontFamily` 必须用 inline `!important`（`setProperty(..., "important")`）。
 
 截图乱码的真正根因：`html2canvas` 用 canvas 渲染文本，而 **Firefox canvas 对通用族 `sans-serif`（以及不含 CJK 字体名的字体栈）的 CJK 回退会命中页面加载的雨课堂混淆字体**，把已解码的真实码点渲染成混淆字形；浏览器 DOM 走 fontconfig 回退所以显示正常——两条路径不同，这解释了「页面显示/复制正常、但脚本截图乱码，且字体文件每次刷新都变而错字固定」。修复：`Solver.captureQuestionImage` 在 html2canvas 的 `onclone` 里，对每个元素移除通用族与 `exam-data-decrypt-font`、追加显式 CJK 字体（`"Microsoft YaHei", "PingFang SC", …`），并跳过 MathJax/KaTeX 元素以保护公式。注意 CJK 字体名必须排在通用族之前，否则仍会命中异常回退。
 
@@ -300,7 +301,7 @@ ai-workspace 视频（`AiWorkspaceRunner.handleMedia`）中，xt 播放器真正
 3. 检测题型。
 4. 通过分层选择器解析可见的选项容器/元素。
 5. 通过 `GM_xmlhttpRequest` 调用 OpenAI 兼容的多模态 API。
-   `askAI(imageDataUrl, { systemPrompt, userText } = {})`：不传 `userText` 时按作业答题走——只吃截图，题型与选项数都不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `Prompt/Homework.md`），模型自己从图里判题型。别再给 `askAI` 加回「把题型/选项数喂给模型」的参数——那是死参数，没人读；真要下发就得先改 prompt。传了 `userText` 就是纯文本请求（讨论区）：`system` 取 `systemPrompt`（`buildForumPrompt()`），user 消息里放 `{ type: "text" }` / `{ type: "input_text" }` 而不是图片 part。两条路共用同一套请求组装、流式、重试与 `StopGate` 中止逻辑，改动别只改一条。
+   `askAI(imageDataUrl, { systemPrompt, userText } = {})`：不传 `userText` 时按作业答题处理——只传截图，题型与选项数均不下发给模型（prompt 是固定 system 文本，见 `buildPrompt()` 与 `Prompt/Homework.md`），由模型自行从图中判断题型。不要给 `askAI` 加回「把题型/选项数喂给模型」的参数——该参数无人读取；若确需下发，先改 prompt。传 `userText` 为纯文本请求（讨论区）：`system` 取 `systemPrompt`（`buildForumPrompt()`），user 消息里放 `{ type: "text" }` / `{ type: "input_text" }` 而不是图片 part。两条路共用同一套请求组装、流式、重试与 `StopGate` 中止逻辑，改动不要只改一条。
 6. 解析模型响应并选择/提交答案。
 
 API 行为：
@@ -363,7 +364,7 @@ API 行为：
 - 保持 V2 不变量：handler 要么回到目录/重载流程，要么显式继续扫描。不要引入 localStorage 进度游标。
 - 当改动涉及行为、架构、验证、路由、存储 key、AI 流程、选择器或本文件描述的其他内容时，在同一次改动中更新对应的 `AGENTS.md` 章节。
 - 交付中不编辑 `ref/`。
-- 发现新的坑时，补入「常见坑」章节（确有再补）。
+- 发现新的坑时补入「常见坑」章节。
 - 完成一整个大任务的改动后，起一个子代理审查改动，按需修改后再提交。
 - commit 说明使用声明式表述，只说重点。
 
@@ -373,16 +374,16 @@ API 行为：
 - 批次子项选择器如果只限定在 `section` 下会漏掉 `.leaf_list__wrap`。
 - 不先检查分数/百分比就把 `进行中` 当作未完成，会误判混合状态字符串。
 - 不使用 FailGate 直接重试条目会造成无限重载循环。
-- `reset()` 必须跳过哨兵：章节（批次）里只剩被 AI 拒答的子项时，`handleBatch` 收尾把父批次标成 `-2` 并返回 `true`，而 `run()` 的清零动作只排除 `-1` —— 哨兵被删掉后下一轮重扫又进同一章节（它永远停在「进行中」）、再标一次、再被删一次，就是「点进去→刷新→再点进去」的整页重载死循环（v2.1.5 修）。任何「有进展就清零」的新代码都要走 `FailGate.reset()`，别自己 `delete map[key]`。
+- `reset()` 必须跳过哨兵：章节（批次）里只剩被 AI 拒答的子项时，`handleBatch` 收尾把父批次标成 `-2` 并返回 `true`，而 `run()` 的清零动作只排除 `-1` —— 哨兵被删掉后下一轮重扫又进同一章节（它永远停在「进行中」）、再标一次、再被删一次，就是「点进去→刷新→再点进去」的整页重载死循环（v2.1.5 修）。任何「有进展就清零」的新代码都要走 `FailGate.reset()`，不要直接 `delete map[key]`。
 - 把跳过的条目标记为失败会产生噪声式误报；有意跳过用 `FailGate.skip()`。
 - V2 目录条目点击会**新开标签**（不是同标签导航）；在目录文档里找 `video`/作业元素必然「未找到 → 重载 → 再点 → 标签无限增长」。交棒用 `HANDOFF`，且 `run()` 收到 `HANDOFF` 时不得 `returnToList()`。
 - 仅 `media.muted=true` 会被网站「解除静音看门狗」1 秒内还原、无用户激活的有声播放被浏览器暂停；起播要走 `Player.prepareMedia`（真实静音后冻结 `muted` 属性）。
 - 交棒后目录无自我重载定时器：若新标签因弹窗被拦 / 落地路由不认识（既非 ai-workspace 也非 `/v2/web`）/ 整个标签崩溃而没回到目录，目录会静默停等（面板仍显示运行中）。目前靠人工重新点「开始」恢复，未加自动超时重载——超时若短于长视频播放会误触发、又开一个标签。需要自愈再加，取值必须 > 单条目最长播放时间。
 - `pendingAutoStart` TTL 为 4 小时（`Store.getPendingAutoStart`），必须 > 单条目播放上界（`getDDL = 时长*3`），否则长视频播到一半过期、`getReturnUrl` 变空、目录永不重载。目录每条目重载会续约 `ts`。
-- `pendingAutoStart` 的 `classroomId` 与 `returnUrl` 必须成对，读写两侧都管：`Store.setPendingAutoStart` 在**换课堂且这次没有新目录地址**时直接返回、不覆盖旧记录；`AiWorkspaceRunner.getReturnUrl()` **只要路由给得出课堂 id 就必须与 pending 对得上**（V2 内容页也不例外，别再给那条分支开后门）。两侧缺一都会留下「课堂 B 的 id + 课堂 A 的目录地址」，把标签导航去另一个课堂。
+- `pendingAutoStart` 的 `classroomId` 与 `returnUrl` 必须成对，读写两侧都管：`Store.setPendingAutoStart` 在**换课堂且这次没有新目录地址**时直接返回、不覆盖旧记录；`AiWorkspaceRunner.getReturnUrl()` **只要路由给得出课堂 id 就必须与 pending 对得上**（V2 内容页也不例外，不要给那条分支开例外）。两侧缺一都会留下「课堂 B 的 id + 课堂 A 的目录地址」，把标签导航去另一个课堂。
 - 讨论（`taolun`/`forum`）子项与顶层讨论条目现在是**交棒**处理（v2.1.0 起）：AI 开着时 `openContentEntry` 交棒给新标签，论坛页由 `AiWorkspaceRunner.handleForum()` 读教师正文、文本问 AI、填回复框发表，再 `returnToSource` 回目录重扫；`autoAI` 关闭时仍按老办法就地 `FailGate.skip`（没有内容可发，交棒只会空转）。`autoComment` 开关与面板勾选框已删除，不要加回来。
 - `returnToSource` 结尾的 `window.close()` 关的是被 `target=_blank` 打开的标签，浏览器可能拒绝（只允许关自己 `open` 的窗口）。修复后必须用 `ykt-ff tabs` 复验每轮标签数是否 ≈ 常数；若持续增长，改为 close 后按 `window.closed` 决定后续，**切勿「close 失败就自己也跳目录」**（会产生两个都会 auto-resume 的目录标签、每轮开 2 个，更糟）。
-- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路跑满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `archive/dev-log/v1-to-v2/AUDIT.md` 第 13 条）。
+- `handleCourseware` 现会在同页「无查看课件按钮 / 非 PPT / 无 `.video-box`」时返回 `false`，让 FailGate 对课件项封顶；但它的判据是 `if (!hasCheckBtn && !isPPT && !videoBox)`——**匹配到「查看课件」按钮就算成功**，即使点击后什么也没找到也会 `return true` 并重置 FailGate。若课件其实是在新标签打开的，这里会变成「重置计数 → 重载 → 再点 → 再开标签」。同页 `isPPT` 判据含 `.el-card__header` 文本含 `PPT`，概况页很容易命中并进了 `playPPTSlides`；`playPPTByNavigation` 既无页码指示器又无翻页按钮时 `sameCount` 恒为 0，会一路计满 `maxPages = 200`。动这条路径前先按 `OBSERVE.md` 的待验证清单确认课件到底是同页弹层还是新标签（见 `archive/dev-log/v1-to-v2/AUDIT.md` 第 13 条）。
 - `html2canvas` 截图把中文渲染成错字，根因是页面加载的混淆字体（DOM 文本被该字体做了字形置换），不是截图代码或图片本身；修复靠 `Decipherer` 先把 DOM 还原为真实中文，再在截图 `onclone` 里换掉字体栈。只改 `@font-face` 不管用。
 - 题目（exercise）跑在 `#iframeExerciseId` iframe（`/v2/web/iframe-exercise/…`）内，主文档既没有题目 DOM 也没有混淆字体；若在 iframe 分支直接 `return`，`Decipherer` 不会在 iframe 内运行，反混淆失效（DOM 仍是错字，复制与截图都不对）。反混淆必须在 iframe 分支里先启动。
 - 仅禁用/覆盖 `@font-face` 不足以让 html2canvas 用系统字体：它自己解析 CSS 加载混淆字体，会把已解码的真实码点渲染成混淆字形（复制正常但截图部分乱码）。必须用 `stripFontFamily` 从元素 `font-family` 里移除 `exam-data-decrypt-font` 引用。
@@ -390,7 +391,7 @@ API 行为：
 - 交棒子标签拿到的是来源目录 sessionStorage 的**拷贝**：子标签自己写 `ykt_fail_counts`，目录读不到（实测同一 key 两边计数不同）。跨标签回写只能写 `window.opener.sessionStorage`，且 `openContentEntry` 必须在点击**之前**写好 `ykt_handoff_key`，因为拷贝是在新标签创建那一刻生成的。
 - 讨论区回复**不要改回截图问 AI**：该页无字体混淆、教师正文是纯文本（`.main-text-attachment`），截图只会多一次 OCR 与 html2canvas 的字体坑。也别把别人的帖子当示范样本喂进去——机主判断那些帖子质量低，会带偏输出。
 - 讨论区的「未发言 / 已发言」是**服务端状态，只在页面加载时更新**：点完发送同页等 7.5 秒仍是「未发言」，重载后才变「已发言」。所以提交确认只认 `.forum-content .comment-text` 里出现自己的楼层（实测点发送后立刻渲染到首位），别拿状态文案当成功判据；反过来「已发言」可以当作「别再发一次」的护栏。
-- 往讨论区回复框写内容必须走 `fillForumReplyBox`：`box.value = text` 对 Vue 的 v-model 无效（DOM 有值、组件内 `value` 仍为空、发送按钮保持 `disabled`）。别忘了先回读 `box.value === text` 再发 `input`。
+- 往讨论区回复框写内容必须走 `fillForumReplyBox`：`box.value = text` 对 Vue 的 v-model 无效（DOM 有值、组件内 `value` 仍为空、发送按钮保持 `disabled`）。必须先回读 `box.value === text` 再发 `input`。
 - **`Utils.poll()` 只回 `true`/`false`**，别把元素/值从它里面取（`const box = await Utils.poll(() => getBox())` → `box === true`）。要元素就 poll 判就绪后**另读一次 DOM**。
-- 别在 `catch` 里静默 `return false`：v2.1.2 的 `fillForumReplyBox` 就是这么把「未能写入回复框」变成无线索的；先让它把 `err.name/message` 打出来，再谈修。
-- 目录里讨论叶子的完成标志是 `.statistics-box .aside` 里的「已发言」（配 `#icon--yiwancheng` 对勾图标；未完成是「未发言」+ `#icon--weiwancheng`）。只按「已完成/已读」判完成会把 23 条讨论全当成未开始，对已发言的那条反复交棒、反复开标签（`markProgress` 还会把失败计数清掉，永远到不了 `maxAttempts`）。
+- 别在 `catch` 里静默 `return false`：v2.1.2 的 `fillForumReplyBox` 就是这么把「未能写入回复框」变成无线索的；先输出 `err.name/message`，再谈修复。
+- 目录里讨论叶子的完成标志是 `.statistics-box .aside` 里的「已发言」（配 `#icon--yiwancheng` 对勾图标；未完成是「未发言」+ `#icon--weiwancheng`）。只按「已完成/已读」判完成会把 {N} 条讨论全当成未开始，对已发言的那条反复交棒、反复开标签（`markProgress` 还会把失败计数清掉，永远到不了 `maxAttempts`）。

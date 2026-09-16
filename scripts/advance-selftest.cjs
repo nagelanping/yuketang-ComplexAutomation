@@ -53,10 +53,10 @@ globalThis.Utils = {
 
 (async () => {
   // 1. 答对：站点已翻页，上一题题面不在页面上 → 不能点「下一题」（点就漏答一题）
-  fingerprints = ["题目二：以下哪项属于品格优势"];
+  fingerprints = ["题目二：以下哪项属于示例概念"];
   clickCount = 0;
   assert.strictEqual(
-    await advanceExerciseQuestion({}, "题目一：习得性乐观的核心观点是什么"),
+    await advanceExerciseQuestion({}, "题目一：以下说法正确的是"),
     true,
     "站点已翻页时应直接算已推进",
   );
@@ -64,38 +64,38 @@ globalThis.Utils = {
 
   // 2. 答错：留在原页、题面后面渲染了结果 → 必须自己点「下一题」
   fingerprints = [
-    "题目一：习得性乐观的核心观点是什么 回答错误 正确答案：B 解析……",
-    "题目二：以下哪项属于品格优势",
+    "题目一：以下说法正确的是 回答错误 正确答案：B 解析……",
+    "题目二：以下哪项属于示例概念",
   ];
   clickCount = 0;
   assert.strictEqual(
-    await advanceExerciseQuestion({}, "题目一：习得性乐观的核心观点是什么"),
+    await advanceExerciseQuestion({}, "题目一：以下说法正确的是"),
     true,
   );
   assert.strictEqual(clickCount, 1, "答错留在原页时应点一次「下一题」");
 
   // 3. 未提交/页面没动：同一题仍在页面上 → 点「下一题」
-  fingerprints = ["题目一：习得性乐观的核心观点是什么", "题目二：以下哪项属于品格优势"];
+  fingerprints = ["题目一：以下说法正确的是", "题目二：以下哪项属于示例概念"];
   clickCount = 0;
   assert.strictEqual(
-    await advanceExerciseQuestion({}, "题目一：习得性乐观的核心观点是什么"),
+    await advanceExerciseQuestion({}, "题目一：以下说法正确的是"),
     true,
   );
   assert.strictEqual(clickCount, 1);
 
   // 4. 页面上没有「下一题」按钮 → 返回 false（由调用方决定是否继续）
-  fingerprints = ["题目一：习得性乐观的核心观点是什么"];
+  fingerprints = ["题目一：以下说法正确的是"];
   clickCount = 0;
   hasNextBtn = false;
   assert.strictEqual(
-    await advanceExerciseQuestion({}, "题目一：习得性乐观的核心观点是什么"),
+    await advanceExerciseQuestion({}, "题目一：以下说法正确的是"),
     false,
   );
   assert.strictEqual(clickCount, 0);
   hasNextBtn = true;
 
   // 5. 没有基准题面（首次调用）→ 不比较，按按钮推进
-  fingerprints = ["题目一：习得性乐观的核心观点是什么", "题目二：以下哪项属于品格优势"];
+  fingerprints = ["题目一：以下说法正确的是", "题目二：以下哪项属于示例概念"];
   clickCount = 0;
   assert.strictEqual(await advanceExerciseQuestion({}, ""), true);
   assert.strictEqual(clickCount, 1, "没有基准题面时应点按钮推进");

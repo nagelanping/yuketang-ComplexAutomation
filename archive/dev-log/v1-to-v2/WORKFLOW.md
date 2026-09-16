@@ -140,7 +140,7 @@ node --check yuketang-ComplexAutomation.user.js
 
 `OBSERVE.md` 中提及 `playVideoItem`/`playAudioItem`/`autoCommentItem` 的两条旧观测保留原样：它们是带日期的实机记录，描述的是站点行为，不是当前代码。
 
-交棒回归已于同日实机执行（`ykt-ff`，班级 31317597，脚本 v1.3.2）：目录每轮只点一个未完成条目并交棒；新标签落在 ai-workspace 并处理该知识点；处理完由 `returnToSource` 把目录标签导航回目录、重扫续行；连续观察约 4 分钟，网页标签数恒为 2（目录 + 一个执行标签），无逐轮增长；目录未在 `HANDOFF` 后自我重载（FailGate 计数跨重载累计到上限后跳过该子项，正常推进到下一子项）。
+交棒回归已于同日实机执行（`ykt-ff`，班级 {classroom_id}，脚本 v1.3.2）：目录每轮只点一个未完成条目并交棒；新标签落在 ai-workspace 并处理该知识点；处理完由 `returnToSource` 把目录标签导航回目录、重扫续行；连续观察约 4 分钟，网页标签数恒为 2（目录 + 一个执行标签），无逐轮增长；目录未在 `HANDOFF` 后自我重载（FailGate 计数跨重载累计到上限后跳过该子项，正常推进到下一子项）。
 
 附带发现（不在本工作包范围，需决定）：`autoCommentItem` 删除后，`autoComment` 开关已没有任何发帖实现，开启时讨论子项只会空转 `maxAttempts` 轮后被跳过。
 

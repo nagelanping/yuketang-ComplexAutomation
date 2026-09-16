@@ -6,17 +6,17 @@
 
 | 组件         | 位置                          | 说明                                                                 |
 | ------------ | ----------------------------- | -------------------------------------------------------------------- |
-| 持久 profile | `/home/Si/.ykt-firefox`     | cookies/登录态跨重启保留；`user.js` 里开了 marionette（端口 2828） |
+| 持久 profile | `tmp/ykt-firefox`（仓库内，gitignored） | cookies/登录态跨重启保留；`user.js` 里开了 marionette（端口 2828）。删掉目录只是丢登录态，`ykt-ff-start` 会自动重建 |
 | 启动器       | `scripts/ykt-ff/ykt-ff-start` | 启动带 marionette 的 GUI Firefox；已在跑则直接返回                   |
 | 控制 CLI     | `scripts/ykt-ff/ykt-ff`       | 约 100 行 Node 脚本，无依赖                                          |
 
 ## 两种模式
 
 1. **专用 profile**（`ykt-ff-start`）：干净环境，需手动登录、重装扩展。适合与主浏览器隔离的测试。
-2. **正常 profile**（`ykt-ff-start-main`）：用机主日常 Firefox（`i77vm44z.default-release`，含 Tampermonkey + 脚本 + 登录态），直接进入 agent 状态。
+2. **正常 profile**（`ykt-ff-start-main`）：用机主日常 Firefox（`{profile_id}.default-release`，含 Tampermonkey + 脚本 + 登录态），直接进入 agent 状态。
    - 前置：先关闭正在运行的 Firefox（marionette 只在启动时启用，同一 profile 单实例）。
    - 脚本会自动先关掉专用 profile 的浏览器以释放 2828 端口。
-   - **注意：`MOZ_MARIONETTE=1` 会把这个 profile 改脏**——实测会写入约 104 条自动化 pref（含 `focusmanager.testmode`、`browser.newtabpage.activity-stream.testing.shouldInitializeFeeds=false` 等），症状是新标签页没有搜索框、fcitx5 中文输入失效。详见文末「profile 污染」。
+   - **注意：`MOZ_MARIONETTE=1` 会污染这个 profile**——实测会写入约 104 条自动化 pref（含 `focusmanager.testmode`、`browser.newtabpage.activity-stream.testing.shouldInitializeFeeds=false` 等），症状是新标签页没有搜索框、fcitx5 中文输入失效。详见文末「profile 污染」。
    - marionette 只在以 `MOZ_MARIONETTE=1` 启动时监听 `127.0.0.1:2828`。
 
 ## 用法
@@ -44,6 +44,11 @@ scripts/ykt-ff/ykt-ff closetab <idx>    # 关闭第 idx 个窗口（拒绝关最
 
 ## 注意
 
+- 不要改用 BiDi（`--remote-debugging-port`）替代 marionette：FF 155 的 BiDi 端点是
+  `ws://127.0.0.1:<port>/session`（`/` 上是 httpd.js 占位页，对 `/session` 用 curl 手动发握手头能拿到 101），
+  但 node 26 内置的 `WebSocket`（undici）握手会被 Firefox 拒绝——`ff.log` 里是
+  `The handshake request has incorrect Upgrade header: undefined`，客户端 close code 1006。基于 BiDi 的
+  `scripts/ykt-inspect/` 已因此删除（2026-09-16）；要重做只能引 `ws` 依赖或手写握手。
 - marionette 走裸 TCP + 长度前缀 JSON 帧（FF 155 已无 WebSocket/旧 remote-debug 协议），
   `ykt-ff` 按此实现；**不要**用 curl 打 2828 端口，会把单连接搞坏（症状：`ykt-ff` 连不上，重启浏览器即恢复）。
 - 会话按连接计：每次 `ykt-ff` 调用新建连接和 session，调用结束自动清理；页面内的
@@ -57,7 +62,7 @@ scripts/ykt-ff/ykt-ff closetab <idx>    # 关闭第 idx 个窗口（拒绝关最
 - 需要「新标签打开 → 执行 → 关闭」时，写一次性 marionette 脚本在同会话内做
   `WebDriver:NewWindow` → `Navigate` → `ExecuteScript` → `CloseWindow`；
   **必须确认 CloseWindow 返回成功**。残留的雨课堂页面会因 localStorage 里的 `pendingAutoStart` 自动续跑，
-  等于多开一个执行体（已在作业页实测踩到）。
+  等于多开一个执行体（已在作业页实测遇到）。
 - 日志：`/tmp/ykt-ff.log`（marionette INFO/ERROR）。
 
 ## 典型工作流（实机检测）
@@ -106,11 +111,11 @@ scripts/ykt-ff/ykt-ff closetab <idx>    # 关闭第 idx 个窗口（拒绝关最
 这两个现象与 Firefox 版本无关：155 和 154 都能复现，且只在被污染过的 profile 上复现；全新 profile 下两个版本都正常。
 （9-14 当天一度误判成「Firefox 155 回归」并降级到 154，那个结论是错的。）
 
-### 什么时候会踩到
+### 什么时候会发生
 
-- `ykt-ff-start`：污染专用 profile `/home/Si/.ykt-firefox`。机主在这个窗口里手动登录/输入时同样受影响。
-- `ykt-ff-start-main`：污染机主日常 profile `i77vm44z.default-release`。这条最要紧——跑完这轮自动化，
-  日常浏览器就会一直带着这批 pref，新标签页和输入法的问题一起留在那儿。
+- `ykt-ff-start`：污染专用 profile `tmp/ykt-firefox`。机主在这个窗口里手动登录/输入时同样受影响。
+- `ykt-ff-start-main`：污染机主日常 profile `{profile_id}.default-release`。这条最要紧——跑完这轮自动化，
+  日常浏览器就会一直带着这批 pref，新标签页和输入法的问题一起留下。
 
 ### 清理办法
 
@@ -132,8 +137,8 @@ prefs = [
     "remote.prefs.recommended.applied",
 ]
 profiles = [
-    "/home/Si/.ykt-firefox",
-    os.path.expanduser("~/.config/mozilla/firefox/i77vm44z.default-release"),
+    "$HOME/Workspace/yuketang-ComplexAutomation/tmp/ykt-firefox",
+    os.path.expanduser("~/.config/mozilla/firefox/{profile_id}.default-release"),
 ]
 for prof in profiles:
     path = os.path.join(prof, "prefs.js")
@@ -151,17 +156,6 @@ EOF
 
 ### 排查手法（以后遇到同类症状）
 
-- 先看 profile 有没有被污染：`grep -cE 'user_pref' prefs.js`（新 profile 约 168 条）
-  加 `grep -E 'focusmanager|input_events|shouldInitializeFeeds' prefs.js`。
-- 判断新标签页是否正常：直接截图（`spectacle -b -n -f -o /tmp/x.png`）比让人描述准确。
-- 判断「Firefox 有没有把按键交给输入法」：用 `LD_PRELOAD` 挂一个几行的 C 小 .so，记录
-  `gtk_im_context_filter_keypress` / `gtk_im_context_focus_in` 的调用（`typeof()` + `dlsym(RTLD_NEXT)` 即可）。
-  注意 `GTK_IM_MODULE=fcitx` 时 Firefox 走异步路径，本来就不调 `filter_keypress`，不能只看这一个函数下结论。
-
-### 当前状态（2026-09-14）
-
-- 系统里的 Firefox 已被机主降级为 154.0.1（取自 pacman 缓存，`IgnorePkg` 未设置）。降级时 Firefox 新建了
-  `zite51x3.default-release-1` 并把 `profiles.ini` 的默认指向它；日常 profile `i77vm44z.default-release` 仍在，
-  需要用 `about:profiles` → `Set as Default Profile` 切回，或 `firefox --profile <dir> --allow-downgrade` 启动。
-- `i77vm44z.default-release` 和 `.ykt-firefox` **目前仍带着**这批 pref，还没清理。
-- `ykt-ff` / `ykt-ff-start` 尚未在 154 上复测（marionette 协议没变，理论上兼容）。
+- 先看 profile 有没有被污染：`grep -cE 'user_pref' prefs.js` 数条目，再 `grep -E 'focusmanager|input_events|shouldInitializeFeeds' prefs.js` 看关键项。
+- 判断「Firefox 有没有把按键交给输入法」：用 `LD_PRELOAD` 记录 `gtk_im_context_filter_keypress` / `gtk_im_context_focus_in` 的调用（`typeof()` + `dlsym(RTLD_NEXT)` 即可）。
+  `GTK_IM_MODULE=fcitx` 时 Firefox 异步路径，不调 `filter_keypress`。

@@ -19,7 +19,7 @@ git diff --check
 
 结果：语法检查与空白检查通过；`Utils.isProgressDone`、`Utils.getDDL`、`Player.isNearEnd/applyMediaDefault/playFromStart/startPlayback` 均仍有调用点，未产生新的死代码。
 
-交棒回归（同日，`ykt-ff`，班级 31317597）：目录每轮只点一个未完成条目并交棒；新标签落 ai-workspace 并处理；处理完由 `returnToSource` 把目录导航回目录重扫；约 4 分钟内网页标签数恒为 2，无逐轮增长；`HANDOFF` 后目录未自我重载。工作包 A 完成。
+交棒回归（同日，`ykt-ff`，班级 {classroom_id}）：目录每轮只点一个未完成条目并交棒；新标签落 ai-workspace 并处理；处理完由 `returnToSource` 把目录导航回目录重扫；约 4 分钟内网页标签数恒为 2，无逐轮增长；`HANDOFF` 后目录未自我重载。工作包 A 完成。
 
 附带发现（不在本工作包范围）：`autoCommentItem` 删除后，`autoComment` 开关不再对应任何发帖实现；开启时讨论子项仍会被交棒，新标签不处理该类型，空转 `maxAttempts` 后被 `FailGate` 跳过而条目永不完成。
 
@@ -167,7 +167,7 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 
 ## 2026-09-13 修复作业逐题「跳题」（机主实机报告，@version 2.0.5）
 
-实机日志（作业「第三章 品格优势与美德--作业」，无题号列表路径）显示：`正在提交...` 后站点**自己翻到下一题**（机主确认），随后脚本空等 8 秒打 `第 1 题 提交后未确认到已提交回写，本轮记未推进`，再无条件点「下一题」→ 又推进一题 → 第 2 题整题漏答，直接开始问第 3 题。
+实机日志（作业「第三章 示例作业」，无题号列表路径）显示：`正在提交...` 后站点**自己翻到下一题**（机主确认），随后脚本空等 8 秒打 `第 1 题 提交后未确认到已提交回写，本轮记未推进`，再无条件点「下一题」→ 又推进一题 → 第 2 题整题漏答，直接开始问第 3 题。
 
 两处修正：
 
@@ -198,7 +198,7 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 
 ## 2026-09-13 题号列表抓取范围修正（实机看 DOM，@version 2.0.8）
 
-机主截图显示作业页左侧确有 1–5 的题号方块，脚本却报「未找到题号列表」。用 `ykt-ff`（专用 profile，端口 2828）打开作业页（leaf 84703977）抽样 DOM，拿到真实结构：
+机主截图显示作业页左侧确有 1–5 的题号方块，脚本却报「未找到题号列表」。用 `ykt-ff`（专用 profile，端口 2828）打开作业页（leaf {leaf_id}）抽样 DOM，拿到真实结构：
 
 ```
 .container-body > .problem-box
@@ -230,7 +230,7 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 - `tmp/prompt-sync-check.cjs` 改按新标记取名（`<AI识图作业Prompt>` … `</AI识图作业Prompt>`），仍输出 `OK: 93 行 prompt 与 SysPmt_Homework.md 逐行一致`（正文本次只改了标记，内容未动）。
 - `AGENTS.md` 增列 `SysPmt_Discussion`（占位，脚本尚未接入）；`WORKFLOW.md` 记下接入时应照作业 prompt 那样带标记 + 同步检查。
 
-讨论区页实机观测（`ykt-ff`，班级 31317597，leaf 84703561）回填 `OBSERVE.md`：该页**无字体混淆**，教师正文 `.main-text-attachment` 为纯文本（img/a/pre/mjx 全 0），回复控件是普通 `textarea.el-textarea__inner`（Enter 发送），帖子在 `.forum-content > .forum-item > .publish-forum-topic`，完成状态是 `.control-right > div.f12.blue-color` 的「未发言」。
+讨论区页实机观测（`ykt-ff`，班级 {classroom_id}，leaf {leaf_id}）回填 `OBSERVE.md`：该页**无字体混淆**，教师正文 `.main-text-attachment` 为纯文本（img/a/pre/mjx 全 0），回复控件是普通 `textarea.el-textarea__inner`（Enter 发送），帖子在 `.forum-content > .forum-item > .publish-forum-topic`，完成状态是 `.control-right > div.f12.blue-color` 的「未发言」。
 
 据此定下讨论区输入方式：**复制文本问 AI，不截图**（详见本轮回复）。
 
@@ -250,7 +250,7 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 
 机主实机截图：目录里已发言的讨论显示对勾 + 「已发言」，脚本却仍当未完成。
 
-- 实机观测（`ykt-ff`，班级 31317597）：讨论是**章节批次的子项**，要展开才渲染；`.statistics-box .aside` 只有「已发言」（`#icon--yiwancheng`）与「未发言」（`#icon--weiwancheng`）两种文案，既无分数也无百分比。该批次 137 个叶子里 23 条是讨论（1 条已发言是我手动发的那条）。
+- 实机观测（`ykt-ff`，班级 {classroom_id}）：讨论是**章节批次的子项**，要展开才渲染；`.statistics-box .aside` 只有「已发言」（`#icon--yiwancheng`）与「未发言」（`#icon--weiwancheng`）两种文案，既无分数也无百分比。该批次 137 个叶子里 23 条是讨论（1 条已发言是我手动发的那条）。
 - 根因：`V2Runner.getCompletionState()` 只认「已完成/已读」→ 讨论全被当未开始 → 已发言那条每轮都交棒，`handleForum` 见「已发言」返回 true → `markProgress` 清掉失败计数 → 重扫再选中，反复开标签且永远到不了 `maxAttempts`。
 - 修：`getCompletionState()` 与 `Utils.isProgressDone()` 都加「已发言 / 已回复」算 completed；`handleForum` 的「已发言」护栏改用 `Utils.isProgressDone()`，两处口径仍旧一处、同一处改。
 - 新增 `tmp/completion-state-selftest.cjs`（14 例：分数/百分比/文字优先级 + 已发言/未发言）。`OBSERVE.md`、`AGENTS.md` 同步。
@@ -272,26 +272,26 @@ J（记录）：机主决定「先保留，等确认无 Pro 入口后再删」�
 
 机主实机日志：讨论区走到 `拟发表（164 字）` 后打 `未能写入回复框，本轮记未推进`。
 
-- 复现：在测试浏览器（无用户脚本管理器）打开同一条讨论（优势测量 leaf 84703581），同一串操作写值成功 → 页面结构从来不是原因。
+- 复现：在测试浏览器（无用户脚本管理器）打开同一条讨论（示例作业 leaf {leaf_id}），同一串操作写值成功 → 页面结构从来不是原因。
 - **真因**（机主回贴的日志）：四种写法分别报「原型链上没有 value setter」「`box.setRangeText is not a function`」「`box.focus is not a function`」「父元素上没有 `__vue__`」——`box` 根本不是元素。因为 `const box = await Utils.poll(() => AiWorkspace.getForumReplyBox(), …)`：**`Utils.poll()` 只 resolve `true`/`false`**，于是 `box === true`。项目里别处都写 `const ready = await Utils.poll(...); const el = get...()`，只有这一处破了例。
 - 修：改成 poll 判就绪 + 另读一次 DOM（`boxReady` / `box` 分开）；`fillForumReplyBox` 退回最小实现（`HTMLTextAreaElement.prototype` 的 value setter + `input` 事件），但**加了回读校验**（`box.value !== text` 即失败）并**把失败原因打出来**——那次之所以查不动，就是因为它在 `catch` 里静默 `return false`。
 - 顺带修 `returnToSource()` 的日志文案（原写「媒体播放完成」，这条路径现在也服务作业与讨论区）。
 - `tmp/forum-selftest.cjs` 重写为 8 组断言，新增「拿错对象（`true`）必须返回 false 并打日志」这条回归用例。
-- 复现/清理记录：调试时往 84703581 的回复框写过「测试文本 123」，事后已清空，没有发送。
+- 复现/清理记录：调试时往 {leaf_id} 的回复框写过「测试文本 123」，事后已清空，没有发送。
 
 ## 2026-09-14 修章节重载死循环：`FailGate.reset()` 抹掉了父批次的拒答哨兵（机主实机报告，@version 2.1.5）
 
 机主报告：章节里有被跳过的作业/讨论时，脚本反复「进入章节 → 发现除跳过项外都完成 → 刷新 → 章节仍是进行中 → 再进入」，死循环。
 
-实机取证（`ykt-ff` 接管机主正常 profile，课堂 31317597）：
+实机取证（`ykt-ff` 接管机主正常 profile，课堂 {classroom_id}）：
 
-- 目录顶层 2 张卡：公告「已读」+ 批次卡「第一章 美好人生 等」（137 个学习单元，默认**不展开**、状态「进行中」）。展开后统计：视频 95 已完成 / 讨论 23 已发言 / 作业 16 已完成 / 图文 3 已读，唯一未完成的是 leaf 84703939「第十五章 积极身心--homework」，目录文案 `5/6 进行中`。
-- 该作业跑在 `#iframeExerciseId`（`/v2/web/iframe-exercise/31317597/84703939`）。题号页签 6 个，页签 class 里 `primary` = 已作答；第 1 题（要求真实完成运动的“勾选已做”）无状态图标，提交栏是「提交」= 未作答。机主补充：该题 AI 返回 `refuse`（要求实际活动，模型拒答）。
+- 目录顶层 2 张卡：公告「已读」+ 批次卡「第一章 示例章节 等」（{N} 个学习单元，默认**不展开**、状态「进行中」）。展开后统计：视频 {N} 已完成 / 讨论 {N} 已发言 / 作业 {N} 已完成 / 图文 {N} 已读，唯一未完成的是 leaf {leaf_id}「第十五章 积极身心--homework」，目录文案 `5/6 进行中`。
+- 该作业跑在 `#iframeExerciseId`（`/v2/web/iframe-exercise/{classroom_id}/{leaf_id}`）。题号页签 6 个，页签 class 里 `primary` = 已作答；第 1 题（要求真实完成运动的“勾选已做”）无状态图标，提交栏是「提交」= 未作答。机主补充：该题 AI 返回 `refuse`（要求实际活动，模型拒答）。
 - `exerciseList.problems`（`container.__vue__.exerciseList`）是 6 个条目、与页签同序；`user.submit_time / is_right / answer` 都在 `user` 里。题 2–6 的 `submit_time` 完全相同（`2026-09-14 08:38`，一次批量提交），第 1 题是机主 11:51 手答的；08:38 那次推测是脚本自己答的（子标签 `handleExercise` 一次遍历答完 6 题）。
 - 根因（代码路径 + 终点状态互证）：子标签拒答 → `FailGate.markRefused(subKey)` 写 `-2` 到 opener(目录)；下一轮批次收尾 `FailGate.markRefusedLocal(parentFailKey)` 把**父批次**也标成 `-2` 并 `return true`；`run()` 紧接着 `if (advanced && !FailGate.skipped(failKey)) FailGate.reset(failKey)` —— `skipped` 只认 `-1`，于是 `reset` 把 `-2` **删掉** → 下一轮重扫又进同一章节（它永远停在「进行中」）→ 再标一次、再删一次：整页重载死循环。机主手动补完那道题后章节变「已完成」，循环随之消失，与推断一致。
 - 修：`FailGate.reset()` 遇到哨兵（`< 0`）直接返回，与 `bump` 同一规矩；普通计数照旧清零。这不是「顺手」，哨兵是扫描判据，不能被「有进展就清零」抹掉。
 - 验证：`tmp/failgate-selftest.cjs` 增 3 组断言（`-2` / `-1` 保留、普通计数仍清零），把该守卫删掉后自测立刻报 `reset 不得抹掉拒答哨兵`（已验证 pre-fix 失败 / post-fix 通过）；`node --check` 与其余八个自测照旧通过。
-- **未实机复现修复后的行为**：该课堂已 100%（批次卡「已完成」、137 项全绿），不再存在「进行中且只剩拒答子项」的章节，无法在实机上跑出这条分支；修复靠代码路径 + 自测守住，实机复核留待下次遇到同类章节。
+- **未实机复现修复后的行为**：该课堂已 100%（批次卡「已完成」、{N} 项全绿），不再存在「进行中且只剩拒答子项」的章节，无法在实机上跑出这条分支；修复靠代码路径 + 自测守住，实机复核留待下次遇到同类章节。
 
 ## 2026-09-14 顺带修两处自测脚本失修（脚本后随仓库结构整理移入 `scripts/`，入库）
 
