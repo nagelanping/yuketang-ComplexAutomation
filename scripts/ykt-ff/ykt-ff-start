@@ -1,0 +1,9 @@
+#!/bin/sh
+# Start the persistent yuketang Firefox (GUI + marionette on 127.0.0.1:2828).
+# Profile /home/Si/.ykt-firefox keeps cookies/login across restarts.
+if pgrep -f "/usr/lib/firefox/firefox --profile /home/Si/.ykt" >/dev/null 2>&1; then
+  echo "already running"
+  exit 0
+fi
+nohup env MOZ_MARIONETTE=1 firefox --profile /home/Si/.ykt-firefox 'https://yuketang.cn/' > /tmp/ykt-ff.log 2>&1 &
+echo "started (marionette on 127.0.0.1:2828); control with: scripts/ykt-ff/ykt-ff <eval|evalf|open|url|title|html>"

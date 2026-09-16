@@ -1,0 +1,134 @@
+#!/usr/bin/env node
+// ykt-ff — minimal Marionette client for the persistent yuketang Firefox profile.
+// Firefox 155 marionette speaks raw TCP with length-prefixed JSON frames: "<len>:<json>".
+// Messages: command [0, id, name, params], response [1, id, error, body]. Server sends
+// hello {"applicationType":"gecko","marionetteProtocol":3} on connect; session is
+// per-connection (driver is reset on close), so each invocation: connect -> NewSession -> cmd -> close.
+//
+// Usage:
+//   ykt-ff eval "<expr>"   evaluate JS expression in active tab, print JSON result
+//   ykt-ff evalf <file>    evaluate JS from file (expression or `function(){...}` body)
+//   ykt-ff open <url>      navigate active tab
+//   ykt-ff url | title     print location.href / document.title
+//   ykt-ff html            print document.documentElement.outerHTML
+// Requires: MOZ_MARIONETTE=1 firefox --profile /home/Si/.ykt-firefox (port 2828, see user.js).
+
+const net = require('net');
+const fs = require('fs');
+
+const PORT = 2828;
+const HOST = '127.0.0.1';
+
+function frame(obj) {
+  const s = JSON.stringify(obj);
+  const data = Buffer.from(s, 'utf8');
+  return Buffer.concat([Buffer.from(data.length + ':', 'utf8'), data]);
+}
+
+async function main() {
+  const [cmd, arg] = process.argv.slice(2);
+  if (!cmd) { console.error('usage: ykt-ff <eval|evalf|open|url|title|html> [arg]'); process.exit(2); }
+
+  let body = null; let tabs = false; let tabIdx = null; let closeIdx = null;
+  if (cmd === 'eval') body = 'return (' + arg + ');';
+  else if (cmd === 'evalf') {
+    const src = fs.readFileSync(arg, 'utf8');
+    body = /^(function\b|async\s+function\b|\(function)/.test(src.trim()) ? src : 'return (function(){' + src + '})();';
+  }
+  else if (cmd === 'html') body = 'return document.documentElement.outerHTML;';
+  else if (cmd === 'url') body = 'return location.href;';
+  else if (cmd === 'title') body = 'return document.title;';
+  else if (cmd === 'tabs') tabs = true;
+  else if (cmd === 'tab') tabIdx = parseInt(arg, 10);
+  else if (cmd === 'closetab') closeIdx = parseInt(arg, 10);
+  if (body === null && !tabs && tabIdx === null && closeIdx === null && cmd !== 'open') { console.error('unknown cmd: ' + cmd); process.exit(2); }
+
+  const sock = net.connect(PORT, HOST);
+  await new Promise((res, rej) => {
+    sock.once('connect', res);
+    sock.once('error', (e) => rej(new Error('cannot connect to marionette at ' + HOST + ':' + PORT + ' — ' + e.message)));
+  });
+
+  let buf = Buffer.alloc(0);
+  let idc = 0;
+  sock.on('data', (d) => {
+    buf = Buffer.concat([buf, d]);
+    if (dataCb) { const cb = dataCb; dataCb = null; cb(); }
+  });
+
+  const waitData = () => new Promise((res) => { dataCb = res; if (buf.length) res(); });
+
+  async function readPacket() {
+    while (true) {
+      const idx = buf.indexOf(':');
+      if (idx >= 0) {
+        const len = parseInt(buf.subarray(0, idx).toString('utf8'), 10);
+        if (Number.isInteger(len) && buf.length >= idx + 1 + len) {
+          const obj = JSON.parse(buf.subarray(idx + 1, idx + 1 + len).toString('utf8'));
+          buf = buf.subarray(idx + 1 + len);
+          return obj;
+        }
+      }
+      await waitData();
+    }
+  }
+
+  const req = (name, params = {}) => {
+    const id = ++idc;
+    return (async () => {
+      sock.write(frame([0, id, name, params]));
+      while (true) {
+        const obj = await readPacket();
+        if (Array.isArray(obj) && obj[0] === 1 && obj[1] === id) {
+          if (obj[2]) throw new Error('marionette error: ' + (typeof obj[2] === 'string' ? obj[2] : JSON.stringify(obj[2])));
+          return obj[3];
+        }
+        // skip hello / events
+      }
+    })();
+  };
+
+  try {
+    // server hello arrives first
+    await readPacket();
+    const session = await req('WebDriver:NewSession', {});
+    if (tabs || tabIdx !== null || closeIdx !== null) {
+      const _wh = await req('WebDriver:GetWindowHandles', {});
+      const handles = Array.isArray(_wh) ? _wh : _wh.value;
+      if (closeIdx !== null) {
+        if (handles.length <= 1) throw new Error('refusing to close the last tab');
+        if (closeIdx < 0 || closeIdx >= handles.length) throw new Error('tab index ' + closeIdx + ' out of range');
+        await req('WebDriver:SwitchToWindow', { handle: handles[closeIdx] });
+        await req('WebDriver:CloseWindow', {});
+        console.log('closed tab ' + closeIdx);
+      } else if (tabIdx !== null) {
+        if (tabIdx < 0 || tabIdx >= handles.length) throw new Error('tab index ' + tabIdx + ' out of range (0..' + (handles.length - 1) + ')');
+        await req('WebDriver:SwitchToWindow', { handle: handles[tabIdx] });
+        let info = '(privileged)';
+        try { info = (await req('WebDriver:ExecuteScript', { script: "return location.href + ' | ' + document.title", args: [], context: 'content' })).value; } catch {}
+        console.log('switched to tab ' + tabIdx + ': ' + info);
+      } else {
+        const first = handles[0];
+        for (let i = 0; i < handles.length; i++) {
+          await req('WebDriver:SwitchToWindow', { handle: handles[i] });
+          let info = '(privileged)';
+          try { info = (await req('WebDriver:ExecuteScript', { script: "return location.href + ' | ' + document.title", args: [], context: 'content' })).value; } catch {}
+          console.log('[' + i + '] ' + handles[i] + '  ' + info);
+        }
+        await req('WebDriver:SwitchToWindow', { handle: first }); // restore original tab
+      }
+    } else if (cmd === 'open') {
+      await req('WebDriver:Navigate', { url: arg });
+      console.log('navigated to ' + arg);
+    } else {
+      let r = await req('WebDriver:ExecuteScript', { script: body, args: [], context: 'content' });
+      if (r && typeof r === 'object' && 'value' in r && Object.keys(r).length === 1) r = r.value;
+      if (r !== undefined && r !== null) console.log(typeof r === 'string' ? r : JSON.stringify(r, null, 2));
+    }
+  } finally {
+    try { await req('WebDriver:Close', {}); } catch {}
+    sock.destroy();
+  }
+}
+
+main().catch((e) => { console.error('ykt-ff: ' + e.message); process.exit(1); });

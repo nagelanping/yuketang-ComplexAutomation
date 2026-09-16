@@ -39,7 +39,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 附料各归其位，别再往别处塞文件：
 
 - `Prompt/`（**入库**）：prompt 源文本。`Homework.md`（作业答题，标记 `<AI识图作业Prompt>`）、`Discussion.md`（讨论区回复，标记 `<AI讨论区Prompt>`）。名字可以改、位置可以挪——`scripts/prompt-sync-check.cjs` 是按标记找文件的，不认文件名。
-- `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-inspect/` 是 BiDi 调试小工具（`launch.sh` 起带 `--remote-debugging-port` 的 Firefox，`bi.mjs` 驱动）。新增检查脚本一律放这里。
+- `scripts/`（**入库**）：可重复运行的检查脚本与开发工具。10 个 `*-selftest.cjs` 与 `prompt-sync-check.cjs` 按 `__dirname` 找主源码，从任意 cwd 都能跑；`ykt-inspect/` 是 BiDi 调试小工具（`launch.sh` 起带 `--remote-debugging-port` 的 Firefox，`bi.mjs` 驱动）；`ykt-ff/` 是 marionette 实机检测的三个脚本（`ykt-ff-start`、`ykt-ff-start-main`、`ykt-ff`），不在 PATH 上，从仓库根目录用 `scripts/ykt-ff/<名字>` 调用。新增检查脚本一律放这里。
 - `tmp/`（**gitignore**）：本地诊断素材与一次性探针，留作以后参考。按来源分目录：`ai-captures/`（AI 请求抓取：prompt/请求体/题图）、`dom-samples/`（页面 DOM 片段）、`site-bundles/`（站点 chunk 抓取）、`font/`（字体反混淆与 html2canvas 排查：`exam_font.ttf`、`MAP_DATA.*`、截图、`font-*.cjs`）、`probes/`（一次性 DOM/网络探针）、`firefox-marionette/`（从 omni.ja 摘出的 marionette 协议源码，`ykt-ff` 就是照它写的）、`attic/`（旧提交草稿）。诊断脚本与它用的素材放同一个子目录，路径按 `__dirname` 找，不依赖 cwd。
 - `archive/`（**入库**）：冻结不改的历史。当前是 `dev-log/v1-to-v2/`（v1→v2 阶段的 LOG/WORKFLOW/AUDIT）。
 - `ref/`（**入库**）：参考脚本来源，只读不改。
@@ -53,7 +53,7 @@ userscript 以 IIFE 形式在 `*.yuketang.cn` 页面以 `@run-at document-start`
 - JS 逻辑改动后跑相关的最小自测（`node scripts/<关键词>-selftest.cjs`，见「代码导航」）；prompt 源或 `build*Prompt()` 改动后跑 `node scripts/prompt-sync-check.cjs`。
 - 运行时验证靠手动：
   在脚本管理器中安装/更新 userscript，打开雨课堂课程目录页，从脚本面板启动，同时检查浏览器 Console 与面板日志。
-- 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。用 `ykt-ff-start` 启动，用 `ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
+- 实机页面检测（agent 驱动）：持久 GUI Firefox profile 位于 `/home/Si/.ykt-firefox`（登录/cookies 跨重启保留），在 `127.0.0.1:2828` 暴露 marionette。脚本在 `scripts/ykt-ff/`：用 `scripts/ykt-ff/ykt-ff-start` 启动，用 `scripts/ykt-ff/ykt-ff` 驱动（`eval`、`evalf`、`open`、`url`、`title`、`html`）。用户在可见窗口里登录；agent 通过 CLI 读取 DOM/网络状态。
   多标签时 `ykt-ff` 只作用于活动标签，先 `ykt-ff tabs` 看清、再 `ykt-ff tab <idx>` 切换；句柄顺序在不同会话间不稳定，`tab <idx>` 可能落到 `(privileged)` 窗口并报 `ExecuteScript ... not supported for privileged browsing contexts`。细节见 `FIREFOX.md`。
 
 若某次任务只改了文档或 prompt，请说明 `node --check` 是否没有必要。

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Start the user's NORMAL Firefox profile with marionette (agent mode).
+# Requires closing Firefox first (marionette only activates at startup; one instance per profile).
+# All user data / extensions (Tampermonkey + userscripts) are intact.
+
+# 先释放端口 2828：若旧的 ykt 专用浏览器还在，关掉它（其 profile 数据保留）
+pkill -f "/usr/lib/firefox/firefox --profile /home/Si/.ykt-firefox" 2>/dev/null
+sleep 1
+
+if pgrep -f "/usr/lib/firefox/firefox" >/dev/null 2>&1; then
+  echo "Firefox is still running — close it first (keep session), then re-run this script."
+  exit 1
+fi
+
+nohup env MOZ_MARIONETTE=1 /usr/lib/firefox/firefox > /tmp/ykt-ff-main.log 2>&1 &
+
+# 等待 marionette 端口就绪
+for i in $(seq 1 30); do
+  if ss -ltn 2>/dev/null | grep -q "127.0.0.1:2828"; then
+    echo "ready: normal Firefox running with marionette on 127.0.0.1:2828 — control with scripts/ykt-ff/ykt-ff"
+    exit 0
+  fi
+  sleep 1
+done
+echo "timed out waiting for 127.0.0.1:2828 — check /tmp/ykt-ff-main.log"
+exit 1
